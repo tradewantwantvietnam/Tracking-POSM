@@ -11,7 +11,7 @@ import {
   CartesianGrid,
   ResponsiveContainer,
 } from "recharts";
-import { ITEMS, PRICE } from "../lib/transform";
+import { ITEMS, PRICE, WEIGHT } from "../lib/transform";
 
 const COLORS = {
   done: "#22a06b",
@@ -21,6 +21,9 @@ const COLORS = {
 };
 
 // ---------- tiện ích ----------
+// Hệ số nhân theo chế độ xem: Số lượng = 1, Quy đổi = balo 2, Giá trị = đơn giá
+const weightOf = (k, metric) => (metric === "value" ? PRICE[k] : metric === "conv" ? WEIGHT[k] : 1);
+
 const keysOf = (item) => (item === "all" ? ITEMS.map((i) => i.key) : [item]);
 
 function fmt(n, metric) {
@@ -51,7 +54,7 @@ function transCalc(t, item, metric) {
   let need = 0;
   let done = 0;
   for (const k of keysOf(item)) {
-    const w = metric === "value" ? PRICE[k] : 1;
+    const w = weightOf(k, metric);
     need += t.need[k] * w;
     done += t.done[k] * w;
   }
@@ -62,7 +65,7 @@ function transCalc(t, item, metric) {
 function recvCalc(r, item, metric) {
   let need = 0, ded = 0, rem = 0, over = 0, ton = 0, sd = 0, tt = 0;
   for (const k of keysOf(item)) {
-    const w = metric === "value" ? PRICE[k] : 1;
+    const w = weightOf(k, metric);
     const n = r.need[k];
     const t = r.tt[k];
     need += n * w;
@@ -323,7 +326,7 @@ export default function Page() {
   );
 
   const itemLabel = item === "all" ? "Tất cả mặt hàng" : ITEMS.find((i) => i.key === item).label;
-  const unit = metric === "value" ? "VND" : "cái";
+  const unit = metric === "value" ? "VND" : metric === "conv" ? "điểm quy đổi" : "cái";
 
   return (
     <div className="wrap">
@@ -360,6 +363,7 @@ export default function Page() {
           </select>
           <div className="seg">
             <button className={metric === "qty" ? "on" : ""} onClick={() => setMetric("qty")}>Số lượng</button>
+            <button className={metric === "conv" ? "on" : ""} onClick={() => setMetric("conv")} title="Balo = 2, Áo thun = 1, Khay đá = 1">Quy đổi</button>
             <button className={metric === "value" ? "on" : ""} onClick={() => setMetric("value")}>Giá trị</button>
           </div>
           <button onClick={load} disabled={loading}>{loading ? "Đang tải…" : "Làm mới"}</button>
