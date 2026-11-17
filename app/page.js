@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -30,6 +29,19 @@ const fmtPct = (p) =>
   Number.isFinite(p) ? p.toLocaleString("vi-VN", { maximumFractionDigits: 1 }) + "%" : "0%";
 const trio = (o) => fmt(o.at) + " / " + fmt(o.bl) + " / " + fmt(o.kd);
 
+/** Rút gọn tên NPP để luôn hiển thị 1 dòng trên trục Y của chart */
+function shortName(s, max = 28) {
+  let t = String(s || "")
+    .replace(/^CÔNG TY (TRÁCH NHIỆM HỮU HẠN|TNHH|CỔ PHẦN|CP)\s*/i, "")
+    .replace(/^(MỘT THÀNH VIÊN|MTV|1TV)\s*/i, "")
+    .replace(/^DOANH NGHIỆP TƯ NHÂN\s*/i, "DNTN ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (t.length <= max) return t;
+  return t.slice(0, max - 1).trimEnd() + "…";
+}
+
 // 1 dòng điều tiết (NPP giao -> NPP nhận)
 function transCalc(t, item) {
   let need = 0;
@@ -43,17 +55,12 @@ function transCalc(t, item) {
   return { need, done, rem: Math.max(need - done, 0) };
 }
 
-// Trạng thái điều tiết của NPP nhận:
-// - Đã nhận đủ điều tiết
-// - Chưa nhận điều tiết đủ
+// Trạng thái điều tiết của NPP nhận
 function transferStatusOf(need, got) {
   return got >= need ? "recvfull" : "recvshort";
 }
 
-// Trạng thái trừ tồn:
-// - Đã trừ tồn xong khi SL còn lại cần trừ tồn <= 0
-// - Đang xử lý khi đã có SL thực tế sử dụng
-// - Chưa thực hiện khi chưa có SL thực tế sử dụng
+// Trạng thái trừ tồn
 function statusOf(got, used, remaining) {
   // Chưa nhận được hàng thì chưa thể xác nhận đã giải tồn
   if (got <= 0) return "notstart";
@@ -65,11 +72,7 @@ function statusOf(got, used, remaining) {
   return "notstart";
 }
 
-// 1 NPP nhận:
-// - need: SL cần điều tiết
-// - got: SL đã nhận điều tiết
-// - used: SL VP đã trừ tồn (thực tế sử dụng)
-// - remaining: SL còn lại cần trừ tồn (đọc trực tiếp từ sheet)
+// 1 NPP nhận
 function recvCalc(r, item) {
   let need = 0;
   let got = 0;
@@ -122,7 +125,15 @@ function Tip({ active, payload, label, needKey }) {
   const row = payload[0].payload;
 
   return (
-    <div style={{ background: "#fff", border: "1px solid #e3e8ef", borderRadius: 8, padding: "8px 10px", fontSize: 12 }}>
+    <div
+      style={{
+        background: "#fff",
+        border: "1px solid #e3e8ef",
+        borderRadius: 8,
+        padding: "8px 10px",
+        fontSize: 12,
+      }}
+    >
       <div style={{ fontWeight: 700, marginBottom: 4 }}>{row.full || label}</div>
 
       {payload.map((p) => (
@@ -143,52 +154,52 @@ function Tip({ active, payload, label, needKey }) {
 function BarsChart({ data, series, stacked, needKey, height, onPick, yWidth, compact = false }) {
   if (!data.length) return <div className="empty">Không có dữ liệu</div>;
 
-  const perRow = compact ? (stacked ? 25 : 36) : stacked ? 30 : 46;
-  const h = height || Math.max(compact ? 150 : 180, data.length * perRow + (compact ? 48 : 70));
-  const fullLabelWidth = compact
-    ? Math.max(
-        yWidth || 170,
-        ...data.map((row) => String(row.name || "").length * 6.2 + 24)
-      )
-    : yWidth || 170;
+  const perRow = compact ? (stacked ? 26 : 38) : stacked ? 30 : 46;
+  const h = height || Math.max(compact ? 160 : 180, data.length * perRow + (compact ? 52 : 70));
 
-  // Chart compact có vùng tên NPP riêng và vùng cột tối thiểu,
-  // tránh YAxis chiếm hết chiều rộng khiến phần cột bị ép hoặc biến mất.
-  const chartMinWidth = compact ? Math.max(900, fullLabelWidth + 420) : undefined;
+  // Chiều rộng trục Y cố định vừa đủ cho tên đã rút gọn (1 dòng)
+  const axisWidth = yWidth || (compact ? 220 : 170);
 
   return (
-    <div style={compact ? { width: "100%", overflowX: "auto", overflowY: "hidden" } : undefined}>
-      <div style={compact ? { width: "100%", minWidth: chartMinWidth } : { width: "100%" }}>
-        <ResponsiveContainer width="100%" height={h}>
-          <BarChart data={data} layout="vertical" margin={{ top: 4, right: 16, left: 4, bottom: 4 }}>
-            <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#e3e8ef" />
-            <XAxis type="number" tickFormatter={(v) => fmt(v)} fontSize={11} />
-            <YAxis type="category" dataKey="name" width={fullLabelWidth} fontSize={compact ? 10 : 11} interval={0} />
-            <Tooltip content={<Tip needKey={needKey} />} />
-            <Legend wrapperStyle={{ fontSize: 12 }} />
+    <ResponsiveContainer width="100%" height={h}>
+      <BarChart data={data} layout="vertical" margin={{ top: 4, right: 16, left: 4, bottom: 4 }}>
+        <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#e3e8ef" />
+        <XAxis type="number" tickFormatter={(v) => fmt(v)} fontSize={11} />
+        <YAxis
+          type="category"
+          dataKey="name"
+          width={axisWidth}
+          fontSize={compact ? 11 : 11}
+          interval={0}
+          tick={{
+            // Ép không wrap
+            width: axisWidth - 8,
+            style: { whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
+          }}
+        />
+        <Tooltip content={<Tip needKey={needKey} />} />
+        <Legend wrapperStyle={{ fontSize: 12 }} />
 
-            {series.map((s) => (
-              <Bar
-                key={s.key}
-                dataKey={s.key}
-                name={s.name}
-                fill={s.color}
-                stackId={stacked ? "a" : undefined}
-                cursor={onPick ? "pointer" : undefined}
-                onClick={
-                  onPick
-                    ? (d) => {
-                        const row = (d && d.payload) || d;
-                        if (row && row.ma) onPick(row.ma);
-                      }
-                    : undefined
-                }
-              />
-            ))}
-          </BarChart>
-        </ResponsiveContainer>
-      </div>
-    </div>
+        {series.map((s) => (
+          <Bar
+            key={s.key}
+            dataKey={s.key}
+            name={s.name}
+            fill={s.color}
+            stackId={stacked ? "a" : undefined}
+            cursor={onPick ? "pointer" : undefined}
+            onClick={
+              onPick
+                ? (d) => {
+                    const row = (d && d.payload) || d;
+                    if (row && row.ma) onPick(row.ma);
+                  }
+                : undefined
+            }
+          />
+        ))}
+      </BarChart>
+    </ResponsiveContainer>
   );
 }
 
@@ -531,7 +542,7 @@ export default function Page() {
     return { total, byGroup, rows, perItem, remainingByItem, pending };
   }, [fT, item, groupBy]);
 
-  // ----- vùng chưa chốt DS điều tiết (NPP chưa có NPP nhận) -----
+  // ----- vùng chưa chốt DS điều tiết -----
   const pendGroups = useMemo(() => {
     const m = new Map();
 
@@ -613,7 +624,7 @@ export default function Page() {
     [fR, groupBy, item]
   );
 
-  // So sánh SL đã nhận điều tiết với SL còn lại cần trừ tồn theo từng NPP
+  // Chart NPP nhận – chỉ top 12, tên đã rút gọn 1 dòng
   const nppChart = useMemo(
     () =>
       [...rrows]
@@ -622,7 +633,7 @@ export default function Page() {
         .slice(0, 12)
         .map((x) => ({
           ma: x.r.ma,
-          name: x.r.ten,
+          name: shortName(x.r.ten, 26),
           full: x.r.ten + " (" + x.r.ma + ")",
           got: x.c.got,
           remaining: x.c.remaining,
@@ -630,6 +641,7 @@ export default function Page() {
     [rrows]
   );
 
+  // Chart Top NPP còn thiếu điều tiết – tên đã rút gọn 1 dòng
   const topDT = useMemo(
     () =>
       dt.rows
@@ -637,7 +649,7 @@ export default function Page() {
         .sort((a, b) => b.c.rem - a.c.rem)
         .slice(0, 12)
         .map((x) => ({
-          name: x.t.tenGive,
+          name: shortName(x.t.tenGive, 26),
           full:
             x.t.tenGive +
             " → " +
@@ -915,7 +927,7 @@ export default function Page() {
                 data={topDT}
                 needKey="need"
                 stacked
-                yWidth={350}
+                yWidth={220}
                 compact
                 series={[
                   { key: "done", name: "Đã điều tiết", color: COLORS.done },
@@ -928,12 +940,12 @@ export default function Page() {
               <h3>SL cần trừ tồn so với SL đã điều tiết theo NPP nhận</h3>
 
               <div className="hint">
-                Sắp xếp theo SL còn lại cần trừ tồn giảm dần · {itemLabel} · bấm vào cột để xem chi tiết NPP
+                Sắp xếp theo SL còn lại cần trừ tồn giảm dần · Top 12 · {itemLabel} · bấm vào cột để xem chi tiết NPP
               </div>
 
               <BarsChart
                 data={nppChart}
-                yWidth={350}
+                yWidth={220}
                 compact
                 onPick={(ma) => setModal({ kind: "recv", ma, tab: "stock" })}
                 series={[
