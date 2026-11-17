@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -29,15 +30,6 @@ const fmtPct = (p) =>
   Number.isFinite(p) ? p.toLocaleString("vi-VN", { maximumFractionDigits: 1 }) + "%" : "0%";
 const trio = (o) => fmt(o.at) + " / " + fmt(o.bl) + " / " + fmt(o.kd);
 
-function shortName(s, max = 26) {
-  const t = String(s || "")
-    .replace(/^CÔNG TY (TRÁCH NHIỆM HỮU HẠN|TNHH|CỔ PHẦN|CP)\s*/i, "")
-    .replace(/^(MỘT THÀNH VIÊN|MTV|1TV)\s*/i, "")
-    .replace(/^DOANH NGHIỆP TƯ NHÂN\s*/i, "DNTN ")
-    .trim();
-  return t.length > max ? t.slice(0, max - 1) + "…" : t;
-}
-
 // 1 dòng điều tiết (NPP giao -> NPP nhận)
 function transCalc(t, item) {
   let need = 0;
@@ -59,13 +51,14 @@ function transferStatusOf(need, got) {
 }
 
 // Trạng thái trừ tồn:
-// - Chưa nhận hàng thì chưa thể xác nhận đã giải tồn
-// - Đã nhận hàng và SL còn lại cần trừ tồn <= 0: đã giải tồn đủ SL nhận
+// - Đã trừ tồn xong khi SL còn lại cần trừ tồn <= 0
 // - Đang xử lý khi đã có SL thực tế sử dụng
 // - Chưa thực hiện khi chưa có SL thực tế sử dụng
 function statusOf(got, used, remaining) {
+  // Chưa nhận được hàng thì chưa thể xác nhận đã giải tồn
   if (got <= 0) return "notstart";
 
+  // Đã giải tồn hết số lượng thực tế đã nhận điều tiết
   if (remaining <= 0) return "receivedfinished";
 
   if (used > 0) return "processing";
@@ -147,18 +140,24 @@ function Tip({ active, payload, label, needKey }) {
   );
 }
 
-function BarsChart({ data, series, stacked, needKey, height, onPick, yWidth }) {
+function BarsChart({ data, series, stacked, needKey, height, onPick, yWidth, compact = false }) {
   if (!data.length) return <div className="empty">Không có dữ liệu</div>;
 
-  const perRow = stacked ? 30 : 46;
-  const h = height || Math.max(180, data.length * perRow + 70);
+  const perRow = compact ? (stacked ? 26 : 40) : stacked ? 30 : 46;
+  const h = height || Math.max(compact ? 160 : 180, data.length * perRow + (compact ? 55 : 70));
+  const fullLabelWidth = compact
+    ? Math.max(
+        yWidth || 170,
+        ...data.map((row) => String(row.name || "").length * 6.2 + 18)
+      )
+    : yWidth || 170;
 
   return (
     <ResponsiveContainer width="100%" height={h}>
       <BarChart data={data} layout="vertical" margin={{ top: 4, right: 16, left: 4, bottom: 4 }}>
         <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#e3e8ef" />
         <XAxis type="number" tickFormatter={(v) => fmt(v)} fontSize={11} />
-        <YAxis type="category" dataKey="name" width={yWidth || 170} fontSize={11} interval={0} />
+        <YAxis type="category" dataKey="name" width={fullLabelWidth} fontSize={compact ? 10 : 11} interval={0} />
         <Tooltip content={<Tip needKey={needKey} />} />
         <Legend wrapperStyle={{ fontSize: 12 }} />
 
@@ -908,7 +907,8 @@ export default function Page() {
                 data={topDT}
                 needKey="need"
                 stacked
-                yWidth={380}
+                yWidth={350}
+                compact
                 series={[
                   { key: "done", name: "Đã điều tiết", color: COLORS.done },
                   { key: "rem", name: "Còn lại", color: COLORS.rem },
@@ -925,7 +925,8 @@ export default function Page() {
 
               <BarsChart
                 data={nppChart}
-                yWidth={380}
+                yWidth={350}
+                compact
                 onPick={(ma) => setModal({ kind: "recv", ma, tab: "stock" })}
                 series={[
                   { key: "got", name: "SL đã nhận điều tiết", color: COLORS.got },
