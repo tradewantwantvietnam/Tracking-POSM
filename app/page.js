@@ -16,7 +16,7 @@ import { ITEMS } from "../lib/transform";
 const COLORS = {
   done: "#22a06b",
   rem: "#f0a020",
-  need: "#2f6fed",
+  got: "#2f6fed",
   ton: "#22a06b",
 };
 
@@ -50,21 +50,23 @@ function transCalc(t, item) {
   return { need, done, rem: Math.max(need - done, 0) };
 }
 
-// 1 NPP nhận: nhận điều tiết vs tồn hiện tại
+// Trạng thái trừ tồn theo SL đã nhận điều tiết (got) và tồn hiện tại (ton)
+function statusOf(got, ton) {
+  if (got <= 0) return "norecv"; // chưa nhận điều tiết
+  if (ton <= 0) return "finished"; // tồn = 0 -> đã trừ tồn xong
+  if (ton < got) return "processing"; // tồn < SL nhận -> đang xử lý trừ tồn
+  return "notstart"; // tồn = SL nhận -> chưa thực hiện giải tồn
+}
+
+// 1 NPP nhận: SL đã nhận điều tiết vs tồn hiện tại
 function recvCalc(r, item) {
-  const keys = keysOf(item);
-  let need = 0, got = 0, ton = 0, covered = 0;
-  let short = false;
-  for (const k of keys) {
+  let need = 0, got = 0, ton = 0;
+  for (const k of keysOf(item)) {
     need += r.need[k];
     got += r.done[k];
     ton += r.ton[k];
-    covered += Math.min(r.ton[k], r.need[k]);
-    if (r.need[k] > 0 && r.ton[k] < r.need[k]) short = true;
   }
-  let status = "none";
-  if (need > 0) status = !short ? "ok" : covered === 0 ? "out" : "low";
-  return { need, got, ton, pct: pctOf(ton, need), status };
+  return { need, got, ton, paid: Math.max(got - ton, 0), pct: pctOf(ton, got), status: statusOf(got, ton) };
 }
 
 function groupSum(list, keyFn, calcFn, fields) {
@@ -100,7 +102,7 @@ function Tip({ active, payload, label, needKey }) {
   );
 }
 
-function BarsChart({ data, series, stacked, needKey, height, onPick }) {
+function BarsChart({ data, series, stacked, needKey, height, onPick, yWidth }) {
   if (!data.length) return <div className="empty">Không có dữ liệu</div>;
   const perRow = stacked ? 30 : 46;
   const h = height || Math.max(180, data.length * perRow + 70);
@@ -109,7 +111,7 @@ function BarsChart({ data, series, stacked, needKey, height, onPick }) {
       <BarChart data={data} layout="vertical" margin={{ top: 4, right: 16, left: 4, bottom: 4 }}>
         <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#e3e8ef" />
         <XAxis type="number" tickFormatter={(v) => fmt(v)} fontSize={11} />
-        <YAxis type="category" dataKey="name" width={170} fontSize={11} interval={0} />
+        <YAxis type="category" dataKey="name" width={yWidth || 170} fontSize={11} interval={0} />
         <Tooltip content={<Tip needKey={needKey} />} />
         <Legend wrapperStyle={{ fontSize: 12 }} />
         {series.map((s) => (
@@ -153,9 +155,10 @@ function MiniBars({ rows }) {
 
 function Badge({ kind }) {
   const map = {
-    ok: ["b-done", "Đủ tồn"],
-    low: ["b-part", "Thiếu tồn"],
-    out: ["b-over", "Hết tồn"],
+    processing: ["b-part", "Đang xử lý trừ tồn"],
+    finished: ["b-done", "Đã trừ tồn xong"],
+    notstart: ["b-over", "Chưa thực hiện giải tồn"],
+    norecv: ["b-none", "Chưa nhận điều tiết"],
     pend: ["b-warn", NO_LIST],
     gdone: ["b-done", "Đã điều tiết"],
     gpart: ["b-part", "Một phần"],
@@ -228,24 +231,25 @@ function RecvDetail({ r, givers, tab, setTab, onClose }) {
               <thead>
                 <tr>
                   <th className="l">Mặt hàng</th>
-                  <th>Tồn hiện tại</th>
                   <th>SL nhận điều tiết</th>
-                  <th>Tồn − nhận</th>
+                  <th>Tồn hiện tại</th>
+                  <th>Đã trừ tồn</th>
+                  <th>Tiến độ trừ tồn</th>
                   <th className="l">Trạng thái</th>
                 </tr>
               </thead>
               <tbody>
                 {ITEMS.map((i) => {
+                  const got = r.done[i.key];
                   const ton = r.ton[i.key];
-                  const need = r.need[i.key];
-                  const kind = need === 0 ? "none" : ton >= need ? "ok" : ton === 0 ? "out" : "low";
                   return (
                     <tr key={i.key}>
                       <td className="l">{i.label}</td>
+                      <td>{fmt(got)}</td>
                       <td>{fmt(ton)}</td>
-                      <td>{fmt(need)}</td>
-                      <td className={ton - need < 0 ? "neg" : ""}>{fmt(ton - need)}</td>
-                      <td className="l"><Badge kind={kind} /></td>
+                      <td>{fmt(Math.max(got - ton, 0))}</td>
+                      <td>{got > 0 ? fmtPct(pctOf(ton, got)) : "–"}</td>
+                      <td className="l"><Badge kind={statusOf(got, ton)} /></td>
                     </tr>
                   );
                 })}
@@ -390,11 +394,11 @@ export default function Page() {
         const c = calc(t);
         a.need += c.need;
         a.done += c.done;
-        a.rem += c.rem;
         return a;
       },
-      { need: 0, done: 0, rem: 0 }
+      { need: 0, done: 0 }
     );
+    total.rem = total.need - total.done; // còn lại cần điều tiết = cần - đã
     const byGroup = groupSum(fT, (t) => t[groupBy], calc, ["need", "done", "rem"]);
     const rows = fT.map((t) => ({ t, c: calc(t) }));
     const perItem = ITEMS.map((i) => {
@@ -424,35 +428,38 @@ export default function Page() {
   const rrows = useMemo(() => fR.map((r) => ({ r, c: recvCalc(r, item) })), [fR, item]);
 
   const tt = useMemo(() => {
-    const need = rrows.reduce((s, x) => s + x.c.need, 0);
+    const got = rrows.reduce((s, x) => s + x.c.got, 0);
     const ton = rrows.reduce((s, x) => s + x.c.ton, 0);
     const perItem = ITEMS.map((i) => {
-      const n = fR.reduce((s, r) => s + r.need[i.key], 0);
+      const g = fR.reduce((s, r) => s + r.done[i.key], 0);
       const t = fR.reduce((s, r) => s + r.ton[i.key], 0);
-      return { label: i.label, pct: pctOf(t, n), blue: true };
+      return { label: i.label, pct: pctOf(t, g), blue: true };
     });
     const tonByItem = ITEMS.map((i) => ({
       label: i.label,
       v: fR.reduce((s, r) => s + r.ton[i.key], 0),
     }));
-    const lowCount = rrows.filter((x) => x.c.status === "low" || x.c.status === "out").length;
-    return { need, ton, perItem, tonByItem, lowCount };
+    const cnt = { processing: 0, notstart: 0, finished: 0 };
+    rrows.forEach((x) => {
+      if (cnt[x.c.status] !== undefined) cnt[x.c.status] += 1;
+    });
+    return { got, ton, perItem, tonByItem, cnt };
   }, [rrows, fR]);
 
   const byGroupStock = useMemo(
-    () => groupSum(fR, (r) => r[groupBy], (r) => recvCalc(r, item), ["need", "ton"]),
+    () => groupSum(fR, (r) => r[groupBy], (r) => recvCalc(r, item), ["got", "ton"]),
     [fR, groupBy, item]
   );
 
   const nppChart = useMemo(
     () =>
       [...rrows]
-        .sort((a, b) => b.c.need - b.c.ton - (a.c.need - a.c.ton))
+        .sort((a, b) => b.c.ton - a.c.ton || b.c.got - a.c.got)
         .map((x) => ({
           ma: x.r.ma,
-          name: shortName(x.r.ten, 26) + " (" + x.r.ma.replace("WWG_GT_", "") + ")",
+          name: x.r.ten,
           full: x.r.ten + " (" + x.r.ma + ")",
-          need: x.c.need,
+          got: x.c.got,
           ton: x.c.ton,
         })),
     [rrows]
@@ -465,11 +472,11 @@ export default function Page() {
         .sort((a, b) => b.c.rem - a.c.rem)
         .slice(0, 12)
         .map((x) => ({
-          name: shortName(x.t.tenGive),
+          name: x.t.tenGive,
           full:
             x.t.tenGive +
             " → " +
-            (x.t.tenRecv ? shortName(x.t.tenRecv, 30) : "Vùng " + x.t.vung + ": " + NO_LIST),
+            (x.t.tenRecv ? x.t.tenRecv : "Vùng " + x.t.vung + ": " + NO_LIST),
           need: x.c.need,
           done: x.c.done,
           rem: x.c.rem,
@@ -480,13 +487,10 @@ export default function Page() {
   // ----- bảng chi tiết trừ tồn NPP -----
   const needle = q.trim().toLowerCase();
   const tableRows = useMemo(() => {
-    const rank = { out: 0, low: 1, ok: 2, none: 3 };
+    const rank = { notstart: 0, processing: 1, finished: 2, norecv: 3 };
     return rrows
       .filter((x) => !needle || [x.r.ten, x.r.ma, x.r.vung].join(" ").toLowerCase().includes(needle))
-      .sort(
-        (a, b) =>
-          rank[a.c.status] - rank[b.c.status] || b.c.need - b.c.ton - (a.c.need - a.c.ton)
-      );
+      .sort((a, b) => rank[a.c.status] - rank[b.c.status] || b.c.ton - a.c.ton);
   }, [rrows, needle]);
   const pendRows = useMemo(
     () => pendGroups.filter((p) => !needle || (p.vung + " " + NO_LIST).toLowerCase().includes(needle)),
@@ -497,6 +501,8 @@ export default function Page() {
   const modalRecv = modal && modal.kind === "recv" ? receivers.find((r) => r.ma === modal.ma) : null;
   const modalPend = modal && modal.kind === "pend" ? pendGroups.find((p) => p.vung === modal.vung) : null;
   const closeModal = useCallback(() => setModal(null), []);
+
+  const METRIC_LABEL = { need: "SL cần điều tiết", done: "SL đã điều tiết", ton: "Tồn kho hiện tại" };
 
   return (
     <div className="wrap">
@@ -569,19 +575,21 @@ export default function Page() {
             </div>
 
             <div className="card kpi">
-              <div className="label">Tiến độ trừ tồn · {itemLabel}</div>
-              <div className="big">{fmtPct(pctOf(tt.ton, tt.need))}</div>
-              <div className="bar blue"><i style={{ width: Math.min(100, pctOf(tt.ton, tt.need)) + "%" }} /></div>
+              <div className="label">Còn lại cần điều tiết (= cần − đã điều tiết)</div>
+              <div className="big">{fmt(dt.total.rem)}</div>
               <div className="line2">
-                Tồn hiện tại {fmt(tt.ton)} / SL nhận điều tiết {fmt(tt.need)} cái
+                {fmt(dt.total.need)} − {fmt(dt.total.done)} cái · {dt.pending} dòng điều tiết chưa xong
               </div>
-              <MiniBars rows={tt.perItem} />
             </div>
 
             <div className="card kpi">
-              <div className="label">Còn lại cần điều tiết</div>
-              <div className="big">{fmt(dt.total.rem)}</div>
-              <div className="line2">cái · {dt.pending} dòng điều tiết chưa xong</div>
+              <div className="label">Tiến độ trừ tồn · {itemLabel}</div>
+              <div className="big">{fmtPct(pctOf(tt.ton, tt.got))}</div>
+              <div className="bar blue"><i style={{ width: Math.min(100, pctOf(tt.ton, tt.got)) + "%" }} /></div>
+              <div className="line2">
+                Tồn hiện tại {fmt(tt.ton)} / SL đã điều tiết {fmt(tt.got)} cái
+              </div>
+              <MiniBars rows={tt.perItem} />
             </div>
 
             <div className="card kpi">
@@ -591,7 +599,7 @@ export default function Page() {
                 {tt.tonByItem.map((x) => x.label + " " + fmt(x.v)).join(" · ")}
               </div>
               <div className="line2">
-                {tt.lowCount}/{rrows.length} NPP nhận chưa đủ tồn so với SL nhận điều tiết
+                Chưa giải tồn: {tt.cnt.notstart} NPP · Đang xử lý: {tt.cnt.processing} NPP · Đã xong: {tt.cnt.finished} NPP
               </div>
             </div>
           </div>
@@ -612,24 +620,25 @@ export default function Page() {
             </div>
 
             <div className="card">
-              <h3>Tồn hiện tại so với SL nhận điều tiết theo {groupLabel}</h3>
+              <h3>Tồn hiện tại so với SL đã điều tiết theo {groupLabel}</h3>
               <div className="hint">Chỉ tính NPP đã có danh sách nhận điều tiết · {itemLabel} · đơn vị: cái</div>
               <BarsChart
                 data={byGroupStock}
                 series={[
-                  { key: "need", name: "SL nhận điều tiết", color: COLORS.need },
+                  { key: "got", name: "SL đã nhận điều tiết", color: COLORS.got },
                   { key: "ton", name: "Tồn hiện tại", color: COLORS.ton },
                 ]}
               />
             </div>
 
-            <div className="card">
+            <div className="card cardfull">
               <h3>Top dòng điều tiết còn thiếu nhiều nhất</h3>
               <div className="hint">NPP thực hiện điều tiết · 12 dòng đầu · di chuột để xem NPP nhận</div>
               <BarsChart
                 data={topDT}
                 needKey="need"
                 stacked
+                yWidth={380}
                 series={[
                   { key: "done", name: "Đã điều tiết", color: COLORS.done },
                   { key: "rem", name: "Còn lại", color: COLORS.rem },
@@ -640,13 +649,14 @@ export default function Page() {
             <div className="card cardfull">
               <h3>Kiểm tra tồn kho hiện tại của từng NPP nhận điều tiết</h3>
               <div className="hint">
-                Sắp xếp NPP thiếu tồn nhiều nhất lên đầu · {itemLabel} · bấm vào cột để xem tồn từng mặt hàng
+                Sắp xếp theo tồn hiện tại giảm dần · {itemLabel} · bấm vào cột để xem tồn từng mặt hàng
               </div>
               <BarsChart
                 data={nppChart}
+                yWidth={380}
                 onPick={(ma) => setModal({ kind: "recv", ma, tab: "stock" })}
                 series={[
-                  { key: "need", name: "SL nhận điều tiết", color: COLORS.need },
+                  { key: "got", name: "SL đã nhận điều tiết", color: COLORS.got },
                   { key: "ton", name: "Tồn hiện tại", color: COLORS.ton },
                 ]}
               />
@@ -675,8 +685,9 @@ export default function Page() {
                   <tr>
                     <th className="l">NPP nhận điều tiết</th>
                     <th className="l">Vùng</th>
-                    <th>SL đã nhận / cần nhận</th>
+                    <th>SL nhận điều tiết</th>
                     <th>Tồn hiện tại</th>
+                    <th>Đã trừ tồn</th>
                     <th>Tiến độ trừ tồn</th>
                     <th className="l">Trạng thái</th>
                   </tr>
@@ -691,16 +702,18 @@ export default function Page() {
                       <td className="l">{r.vung}</td>
                       <td>
                         <button className="lnk" onClick={() => setModal({ kind: "recv", ma: r.ma, tab: "recv" })}>
-                          {fmt(c.got)} / {fmt(c.need)}
+                          {fmt(c.got)}
                         </button>
+                        <span style={{ color: "#6b7686", fontSize: 12 }}> / cần {fmt(c.need)}</span>
                       </td>
                       <td>
                         <button className="lnk" onClick={() => setModal({ kind: "recv", ma: r.ma, tab: "stock" })}>
                           {fmt(c.ton)}
                         </button>
                       </td>
+                      <td>{fmt(c.paid)}</td>
                       <td>
-                        {c.need > 0 ? (
+                        {c.got > 0 ? (
                           <div style={{ display: "flex", gap: 8, alignItems: "center", justifyContent: "flex-end" }}>
                             <div className="bar blue" style={{ width: 70 }}>
                               <i style={{ width: Math.min(100, c.pct) + "%" }} />
@@ -723,9 +736,10 @@ export default function Page() {
                       <td className="l">{p.vung}</td>
                       <td>
                         <button className="lnk" onClick={() => setModal({ kind: "pend", vung: p.vung })}>
-                          – / {fmt(p.need)}
+                          cần điều tiết {fmt(p.need)}
                         </button>
                       </td>
+                      <td>–</td>
                       <td>–</td>
                       <td>–</td>
                       <td className="l"><Badge kind="pend" /></td>
@@ -738,6 +752,25 @@ export default function Page() {
               ) : null}
             </div>
           </div>
+
+          {data.layout ? (
+            <details style={{ marginTop: 14, fontSize: 12, color: "#6b7686" }}>
+              <summary style={{ cursor: "pointer" }}>Kiểm tra cột dữ liệu đang đọc từ sheet</summary>
+              <div style={{ marginTop: 6 }}>
+                {Object.keys(METRIC_LABEL).map((k) => {
+                  const m = data.layout[k];
+                  if (!m) return null;
+                  return (
+                    <div key={k} style={{ marginBottom: 4 }}>
+                      <b>{METRIC_LABEL[k]}:</b>{" "}
+                      {m.cols.map((c) => c.item + " = cột " + c.letter + " (" + c.header + ")").join(" · ")}
+                      {m.detected ? "" : " ⚠ không tìm thấy tiêu đề, đang dùng vị trí mặc định"}
+                    </div>
+                  );
+                })}
+              </div>
+            </details>
+          ) : null}
         </>
       ) : null}
 
