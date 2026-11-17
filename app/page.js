@@ -143,44 +143,52 @@ function Tip({ active, payload, label, needKey }) {
 function BarsChart({ data, series, stacked, needKey, height, onPick, yWidth, compact = false }) {
   if (!data.length) return <div className="empty">Không có dữ liệu</div>;
 
-  const perRow = compact ? (stacked ? 26 : 40) : stacked ? 30 : 46;
-  const h = height || Math.max(compact ? 160 : 180, data.length * perRow + (compact ? 55 : 70));
+  const perRow = compact ? (stacked ? 25 : 36) : stacked ? 30 : 46;
+  const h = height || Math.max(compact ? 150 : 180, data.length * perRow + (compact ? 48 : 70));
   const fullLabelWidth = compact
     ? Math.max(
         yWidth || 170,
-        ...data.map((row) => String(row.name || "").length * 6.2 + 18)
+        ...data.map((row) => String(row.name || "").length * 6.2 + 24)
       )
     : yWidth || 170;
 
-  return (
-    <ResponsiveContainer width="100%" height={h}>
-      <BarChart data={data} layout="vertical" margin={{ top: 4, right: 16, left: 4, bottom: 4 }}>
-        <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#e3e8ef" />
-        <XAxis type="number" tickFormatter={(v) => fmt(v)} fontSize={11} />
-        <YAxis type="category" dataKey="name" width={fullLabelWidth} fontSize={compact ? 10 : 11} interval={0} />
-        <Tooltip content={<Tip needKey={needKey} />} />
-        <Legend wrapperStyle={{ fontSize: 12 }} />
+  // Chart compact có vùng tên NPP riêng và vùng cột tối thiểu,
+  // tránh YAxis chiếm hết chiều rộng khiến phần cột bị ép hoặc biến mất.
+  const chartMinWidth = compact ? Math.max(900, fullLabelWidth + 420) : undefined;
 
-        {series.map((s) => (
-          <Bar
-            key={s.key}
-            dataKey={s.key}
-            name={s.name}
-            fill={s.color}
-            stackId={stacked ? "a" : undefined}
-            cursor={onPick ? "pointer" : undefined}
-            onClick={
-              onPick
-                ? (d) => {
-                    const row = (d && d.payload) || d;
-                    if (row && row.ma) onPick(row.ma);
-                  }
-                : undefined
-            }
-          />
-        ))}
-      </BarChart>
-    </ResponsiveContainer>
+  return (
+    <div style={compact ? { width: "100%", overflowX: "auto", overflowY: "hidden" } : undefined}>
+      <div style={compact ? { width: "100%", minWidth: chartMinWidth } : { width: "100%" }}>
+        <ResponsiveContainer width="100%" height={h}>
+          <BarChart data={data} layout="vertical" margin={{ top: 4, right: 16, left: 4, bottom: 4 }}>
+            <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#e3e8ef" />
+            <XAxis type="number" tickFormatter={(v) => fmt(v)} fontSize={11} />
+            <YAxis type="category" dataKey="name" width={fullLabelWidth} fontSize={compact ? 10 : 11} interval={0} />
+            <Tooltip content={<Tip needKey={needKey} />} />
+            <Legend wrapperStyle={{ fontSize: 12 }} />
+
+            {series.map((s) => (
+              <Bar
+                key={s.key}
+                dataKey={s.key}
+                name={s.name}
+                fill={s.color}
+                stackId={stacked ? "a" : undefined}
+                cursor={onPick ? "pointer" : undefined}
+                onClick={
+                  onPick
+                    ? (d) => {
+                        const row = (d && d.payload) || d;
+                        if (row && row.ma) onPick(row.ma);
+                      }
+                    : undefined
+                }
+              />
+            ))}
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+    </div>
   );
 }
 
