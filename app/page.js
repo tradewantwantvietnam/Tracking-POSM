@@ -52,19 +52,25 @@ function transCalc(t, item) {
   return { need, done, rem: Math.max(need - done, 0) };
 }
 
+// Trạng thái điều tiết của NPP nhận:
+// - Đã nhận đủ điều tiết
+// - Chưa nhận điều tiết đủ
+function transferStatusOf(need, got) {
+  return got >= need ? "recvfull" : "recvshort";
+}
+
 // Trạng thái trừ tồn:
-// - Chưa nhận điều tiết
 // - Đã trừ tồn xong khi SL còn lại cần trừ tồn <= 0
 // - Đang xử lý khi đã có SL thực tế sử dụng
 // - Chưa thực hiện khi chưa có SL thực tế sử dụng
 function statusOf(got, used, remaining) {
-  if (got <= 0) return "norecv";
   if (remaining <= 0) return "finished";
   if (used > 0) return "processing";
   return "notstart";
 }
 
 // 1 NPP nhận:
+// - need: SL cần điều tiết
 // - got: SL đã nhận điều tiết
 // - used: SL VP đã trừ tồn (thực tế sử dụng)
 // - remaining: SL còn lại cần trừ tồn (đọc trực tiếp từ sheet)
@@ -89,6 +95,7 @@ function recvCalc(r, item) {
     paid: used,
     pct: pctOf(used, got),
     status: statusOf(got, used, remaining),
+    transferStatus: transferStatusOf(need, got),
   };
 }
 
@@ -193,10 +200,12 @@ function MiniBars({ rows }) {
 
 function Badge({ kind }) {
   const map = {
-    processing: ["b-part", "Đang xử lý trừ tồn"],
-    finished: ["b-done", "Đã trừ tồn xong"],
+    processing: ["b-part", "Đang xử lý giải tồn"],
+    finished: ["b-done", "Đã hoàn tất giải tồn"],
     notstart: ["b-over", "Chưa thực hiện giải tồn"],
     norecv: ["b-none", "Chưa nhận điều tiết"],
+    recvfull: ["b-done", "Đã nhận đủ điều tiết"],
+    recvshort: ["b-over", "Chưa nhận điều tiết đủ"],
     pend: ["b-warn", NO_LIST],
     gdone: ["b-done", "Đã điều tiết"],
     gpart: ["b-part", "Một phần"],
@@ -1008,7 +1017,10 @@ export default function Page() {
                       </td>
 
                       <td className="l">
-                        <Badge kind={c.status} />
+                        <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 5 }}>
+                          <Badge kind={c.transferStatus} />
+                          <Badge kind={c.status} />
+                        </div>
                       </td>
                     </tr>
                   ))}
