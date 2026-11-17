@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -43,69 +44,110 @@ function shortName(s, max = 26) {
 function transCalc(t, item) {
   let need = 0;
   let done = 0;
+
   for (const k of keysOf(item)) {
     need += t.need[k];
     done += t.done[k];
   }
+
   return { need, done, rem: Math.max(need - done, 0) };
 }
 
-// Trạng thái trừ tồn theo SL đã nhận điều tiết (got) và tồn hiện tại (ton)
-function statusOf(got, ton) {
-  if (got <= 0) return "norecv"; // chưa nhận điều tiết
-  if (ton <= 0) return "finished"; // tồn = 0 -> đã trừ tồn xong
-  if (ton < got) return "processing"; // tồn < SL nhận -> đang xử lý trừ tồn
-  return "notstart"; // tồn = SL nhận -> chưa thực hiện giải tồn
+// Trạng thái trừ tồn:
+// - Chưa nhận điều tiết
+// - Đã trừ tồn xong khi SL còn lại cần trừ tồn <= 0
+// - Đang xử lý khi đã có SL thực tế sử dụng
+// - Chưa thực hiện khi chưa có SL thực tế sử dụng
+function statusOf(got, used, remaining) {
+  if (got <= 0) return "norecv";
+  if (remaining <= 0) return "finished";
+  if (used > 0) return "processing";
+  return "notstart";
 }
 
-// 1 NPP nhận: SL đã nhận điều tiết vs tồn hiện tại
+// 1 NPP nhận:
+// - got: SL đã nhận điều tiết
+// - ton: Tồn kho hiện tại
+// - used: SL VP đã trừ tồn (thực tế sử dụng)
+// - remaining: SL còn lại cần trừ tồn (đọc trực tiếp từ sheet)
 function recvCalc(r, item) {
-  let need = 0, got = 0, ton = 0;
+  let need = 0;
+  let got = 0;
+  let ton = 0;
+  let used = 0;
+  let remaining = 0;
+
   for (const k of keysOf(item)) {
     need += r.need[k];
     got += r.done[k];
     ton += r.ton[k];
+    used += r.used[k];
+    remaining += r.remaining[k];
   }
-  return { need, got, ton, paid: Math.max(got - ton, 0), pct: pctOf(ton, got), status: statusOf(got, ton) };
+
+  return {
+    need,
+    got,
+    ton,
+    used,
+    remaining,
+    paid: used,
+    pct: pctOf(used, got),
+    status: statusOf(got, used, remaining),
+  };
 }
 
 function groupSum(list, keyFn, calcFn, fields) {
   const m = new Map();
+
   for (const x of list) {
     const key = keyFn(x) || "(chưa rõ)";
     const c = calcFn(x);
+
     if (!m.has(key)) {
       const base = { name: key };
       fields.forEach((f) => (base[f] = 0));
       m.set(key, base);
     }
+
     const g = m.get(key);
     fields.forEach((f) => (g[f] += c[f]));
   }
+
   return Array.from(m.values());
 }
 
 // ---------- thành phần nhỏ ----------
 function Tip({ active, payload, label, needKey }) {
   if (!active || !payload || !payload.length) return null;
+
   const row = payload[0].payload;
+
   return (
     <div style={{ background: "#fff", border: "1px solid #e3e8ef", borderRadius: 8, padding: "8px 10px", fontSize: 12 }}>
       <div style={{ fontWeight: 700, marginBottom: 4 }}>{row.full || label}</div>
+
       {payload.map((p) => (
         <div key={p.dataKey} style={{ color: p.color }}>
           {p.name}: <b>{fmt(p.value)}</b>
         </div>
       ))}
-      {needKey ? <div style={{ marginTop: 4, color: "#6b7686" }}>Tổng cần: {fmt(row[needKey] || 0)}</div> : null}
+
+      {needKey ? (
+        <div style={{ marginTop: 4, color: "#6b7686" }}>
+          Tổng cần: {fmt(row[needKey] || 0)}
+        </div>
+      ) : null}
     </div>
   );
 }
 
 function BarsChart({ data, series, stacked, needKey, height, onPick, yWidth }) {
   if (!data.length) return <div className="empty">Không có dữ liệu</div>;
+
   const perRow = stacked ? 30 : 46;
   const h = height || Math.max(180, data.length * perRow + 70);
+
   return (
     <ResponsiveContainer width="100%" height={h}>
       <BarChart data={data} layout="vertical" margin={{ top: 4, right: 16, left: 4, bottom: 4 }}>
@@ -114,6 +156,7 @@ function BarsChart({ data, series, stacked, needKey, height, onPick, yWidth }) {
         <YAxis type="category" dataKey="name" width={yWidth || 170} fontSize={11} interval={0} />
         <Tooltip content={<Tip needKey={needKey} />} />
         <Legend wrapperStyle={{ fontSize: 12 }} />
+
         {series.map((s) => (
           <Bar
             key={s.key}
@@ -165,7 +208,9 @@ function Badge({ kind }) {
     gnone: ["b-over", "Chưa điều tiết"],
     none: ["b-none", "–"],
   };
+
   const [cls, text] = map[kind] || map.none;
+
   return <span className={"badge " + cls}>{text}</span>;
 }
 
@@ -174,9 +219,11 @@ function Modal({ title, sub, onClose, children }) {
     const h = (e) => {
       if (e.key === "Escape") onClose();
     };
+
     window.addEventListener("keydown", h);
     return () => window.removeEventListener("keydown", h);
   }, [onClose]);
+
   return (
     <div className="overlay" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
@@ -184,6 +231,7 @@ function Modal({ title, sub, onClose, children }) {
           <h3>{title}</h3>
           <button onClick={onClose}>Đóng</button>
         </div>
+
         {sub ? <div className="msub">{sub}</div> : null}
         {children}
       </div>
@@ -194,8 +242,10 @@ function Modal({ title, sub, onClose, children }) {
 function giverKind(t) {
   const need = t.need.at + t.need.bl + t.need.kd;
   const done = t.done.at + t.done.bl + t.done.kd;
+
   if (need > 0 && done >= need) return "gdone";
   if (done > 0) return "gpart";
+
   return "gnone";
 }
 
@@ -205,6 +255,7 @@ function RecvDetail({ r, givers, tab, setTab, onClose }) {
     const rank = { gnone: 0, gpart: 1, gdone: 2 };
     return rank[giverKind(a)] - rank[giverKind(b)];
   });
+
   const nDone = givers.filter((t) => giverKind(t) === "gdone").length;
   const nPart = givers.filter((t) => giverKind(t) === "gpart").length;
   const nNone = givers.length - nDone - nPart;
@@ -212,8 +263,12 @@ function RecvDetail({ r, givers, tab, setTab, onClose }) {
   return (
     <Modal title={r.ten} sub={r.ma + " · " + r.vung + " · " + r.mien} onClose={onClose}>
       <div className="seg">
-        <button className={tab === "recv" ? "on" : ""} onClick={() => setTab("recv")}>SL nhận điều tiết</button>
-        <button className={tab === "stock" ? "on" : ""} onClick={() => setTab("stock")}>Tồn kho hiện tại</button>
+        <button className={tab === "recv" ? "on" : ""} onClick={() => setTab("recv")}>
+          SL nhận điều tiết
+        </button>
+        <button className={tab === "stock" ? "on" : ""} onClick={() => setTab("stock")}>
+          Tồn kho hiện tại
+        </button>
       </div>
 
       {tab === "stock" ? (
@@ -226,6 +281,7 @@ function RecvDetail({ r, givers, tab, setTab, onClose }) {
               </div>
             ))}
           </div>
+
           <div className="tablewrap">
             <table>
               <thead>
@@ -234,22 +290,30 @@ function RecvDetail({ r, givers, tab, setTab, onClose }) {
                   <th>SL nhận điều tiết</th>
                   <th>Tồn hiện tại</th>
                   <th>Đã trừ tồn</th>
+                  <th>SL còn lại cần trừ tồn</th>
                   <th>Tiến độ trừ tồn</th>
                   <th className="l">Trạng thái</th>
                 </tr>
               </thead>
+
               <tbody>
                 {ITEMS.map((i) => {
                   const got = r.done[i.key];
                   const ton = r.ton[i.key];
+                  const used = r.used[i.key];
+                  const remaining = r.remaining[i.key];
+
                   return (
                     <tr key={i.key}>
                       <td className="l">{i.label}</td>
                       <td>{fmt(got)}</td>
                       <td>{fmt(ton)}</td>
-                      <td>{fmt(Math.max(got - ton, 0))}</td>
-                      <td>{got > 0 ? fmtPct(pctOf(ton, got)) : "–"}</td>
-                      <td className="l"><Badge kind={statusOf(got, ton)} /></td>
+                      <td>{fmt(used)}</td>
+                      <td>{fmt(remaining)}</td>
+                      <td>{got > 0 ? fmtPct(pctOf(used, got)) : "–"}</td>
+                      <td className="l">
+                        <Badge kind={statusOf(got, used, remaining)} />
+                      </td>
                     </tr>
                   );
                 })}
@@ -264,9 +328,11 @@ function RecvDetail({ r, givers, tab, setTab, onClose }) {
             <span className="badge b-part">Một phần: {nPart} NPP</span>
             <span className="badge b-over">Chưa điều tiết: {nNone} NPP</span>
           </div>
+
           <div className="hint" style={{ color: "#6b7686", fontSize: 12, marginBottom: 8 }}>
             Số hiển thị theo thứ tự: Áo thun / Balo / Khay đá
           </div>
+
           <div className="tablewrap">
             <table>
               <thead>
@@ -277,13 +343,19 @@ function RecvDetail({ r, givers, tab, setTab, onClose }) {
                   <th className="l">Trạng thái</th>
                 </tr>
               </thead>
+
               <tbody>
                 {sorted.map((t) => (
                   <tr key={t.id}>
-                    <td className="name l">{t.tenGive}<div style={{ color: "#6b7686", fontSize: 12 }}>{t.maGive}</div></td>
+                    <td className="name l">
+                      {t.tenGive}
+                      <div style={{ color: "#6b7686", fontSize: 12 }}>{t.maGive}</div>
+                    </td>
                     <td>{trio(t.need)}</td>
                     <td>{trio(t.done)}</td>
-                    <td className="l"><Badge kind={giverKind(t)} /></td>
+                    <td className="l">
+                      <Badge kind={giverKind(t)} />
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -302,6 +374,7 @@ function PendDetail({ p, onClose }) {
       <div className="hint" style={{ color: "#6b7686", fontSize: 12, marginBottom: 8 }}>
         Các NPP cần điều tiết nhưng ASM chưa chốt NPP nhận. Số hiển thị theo thứ tự: Áo thun / Balo / Khay đá
       </div>
+
       <div className="tablewrap">
         <table>
           <thead>
@@ -310,10 +383,14 @@ function PendDetail({ p, onClose }) {
               <th>Cần điều tiết</th>
             </tr>
           </thead>
+
           <tbody>
             {p.givers.map((t) => (
               <tr key={t.id}>
-                <td className="name l">{t.tenGive}<div style={{ color: "#6b7686", fontSize: 12 }}>{t.maGive}</div></td>
+                <td className="name l">
+                  {t.tenGive}
+                  <div style={{ color: "#6b7686", fontSize: 12 }}>{t.maGive}</div>
+                </td>
                 <td>{trio(t.need)}</td>
               </tr>
             ))}
@@ -333,14 +410,16 @@ export default function Page() {
   const [vung, setVung] = useState("all");
   const [item, setItem] = useState("all");
   const [q, setQ] = useState("");
-  const [modal, setModal] = useState(null); // {kind:'recv', ma, tab} | {kind:'pend', vung}
+  const [modal, setModal] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     setErr("");
+
     try {
       const res = await fetch("/api/data", { cache: "no-store" });
       if (!res.ok) throw new Error("HTTP " + res.status);
+
       setData(await res.json());
     } catch (e) {
       setErr(e.message || String(e));
@@ -357,9 +436,15 @@ export default function Page() {
   const receivers = data ? data.receivers : [];
 
   const mienOptions = useMemo(
-    () => Array.from(new Set([...transfers.map((t) => t.mien), ...receivers.map((r) => r.mien)].filter(Boolean))).sort(),
+    () =>
+      Array.from(
+        new Set(
+          [...transfers.map((t) => t.mien), ...receivers.map((r) => r.mien)].filter(Boolean)
+        )
+      ).sort(),
     [transfers, receivers]
   );
+
   const vungOptions = useMemo(
     () =>
       Array.from(
@@ -374,11 +459,22 @@ export default function Page() {
   );
 
   const fT = useMemo(
-    () => transfers.filter((t) => (mien === "all" || t.mien === mien) && (vung === "all" || t.vung === vung)),
+    () =>
+      transfers.filter(
+        (t) =>
+          (mien === "all" || t.mien === mien) &&
+          (vung === "all" || t.vung === vung)
+      ),
     [transfers, mien, vung]
   );
+
   const fR = useMemo(
-    () => receivers.filter((r) => (mien === "all" || r.mien === mien) && (vung === "all" || r.vung === vung)),
+    () =>
+      receivers.filter(
+        (r) =>
+          (mien === "all" || r.mien === mien) &&
+          (vung === "all" || r.vung === vung)
+      ),
     [receivers, mien, vung]
   );
 
@@ -389,6 +485,7 @@ export default function Page() {
   // ----- điều tiết -----
   const dt = useMemo(() => {
     const calc = (t) => transCalc(t, item);
+
     const total = fT.reduce(
       (a, t) => {
         const c = calc(t);
@@ -398,56 +495,110 @@ export default function Page() {
       },
       { need: 0, done: 0 }
     );
-    total.rem = total.need - total.done; // còn lại cần điều tiết = cần - đã
+
+    total.rem = total.need - total.done;
+
     const byGroup = groupSum(fT, (t) => t[groupBy], calc, ["need", "done", "rem"]);
     const rows = fT.map((t) => ({ t, c: calc(t) }));
+
     const perItem = ITEMS.map((i) => {
       const n = fT.reduce((s, t) => s + t.need[i.key], 0);
       const d = fT.reduce((s, t) => s + t.done[i.key], 0);
+
       return { label: i.label, pct: pctOf(d, n) };
     });
+
     const pending = rows.filter((x) => x.c.rem > 0).length;
+
     return { total, byGroup, rows, perItem, pending };
   }, [fT, item, groupBy]);
 
   // ----- vùng chưa chốt DS điều tiết (NPP chưa có NPP nhận) -----
   const pendGroups = useMemo(() => {
     const m = new Map();
+
     for (const t of fT) {
       if (t.maRecv) continue;
+
       const key = t.vung || "(chưa rõ)";
-      if (!m.has(key)) m.set(key, { vung: key, mien: t.mien, givers: [], need: 0 });
+
+      if (!m.has(key)) {
+        m.set(key, { vung: key, mien: t.mien, givers: [], need: 0 });
+      }
+
       const g = m.get(key);
       g.givers.push(t);
       g.need += transCalc(t, item).need;
     }
+
     return Array.from(m.values());
   }, [fT, item]);
 
   // ----- trừ tồn (NPP nhận) -----
-  const rrows = useMemo(() => fR.map((r) => ({ r, c: recvCalc(r, item) })), [fR, item]);
+  const rrows = useMemo(
+    () => fR.map((r) => ({ r, c: recvCalc(r, item) })),
+    [fR, item]
+  );
 
   const tt = useMemo(() => {
     const got = rrows.reduce((s, x) => s + x.c.got, 0);
     const ton = rrows.reduce((s, x) => s + x.c.ton, 0);
+    const used = rrows.reduce((s, x) => s + x.c.used, 0);
+    const remaining = rrows.reduce((s, x) => s + x.c.remaining, 0);
+
     const perItem = ITEMS.map((i) => {
       const g = fR.reduce((s, r) => s + r.done[i.key], 0);
-      const t = fR.reduce((s, r) => s + r.ton[i.key], 0);
-      return { label: i.label, pct: pctOf(t, g), blue: true };
+      const u = fR.reduce((s, r) => s + r.used[i.key], 0);
+
+      return {
+        label: i.label,
+        pct: pctOf(u, g),
+        blue: true,
+      };
     });
+
     const tonByItem = ITEMS.map((i) => ({
       label: i.label,
       v: fR.reduce((s, r) => s + r.ton[i.key], 0),
     }));
-    const cnt = { processing: 0, notstart: 0, finished: 0 };
+
+    const remainingByItem = ITEMS.map((i) => ({
+      label: i.label,
+      v: fR.reduce((s, r) => s + r.remaining[i.key], 0),
+    }));
+
+    const cnt = {
+      processing: 0,
+      notstart: 0,
+      finished: 0,
+    };
+
     rrows.forEach((x) => {
-      if (cnt[x.c.status] !== undefined) cnt[x.c.status] += 1;
+      if (cnt[x.c.status] !== undefined) {
+        cnt[x.c.status] += 1;
+      }
     });
-    return { got, ton, perItem, tonByItem, cnt };
+
+    return {
+      got,
+      ton,
+      used,
+      remaining,
+      perItem,
+      tonByItem,
+      remainingByItem,
+      cnt,
+    };
   }, [rrows, fR]);
 
   const byGroupStock = useMemo(
-    () => groupSum(fR, (r) => r[groupBy], (r) => recvCalc(r, item), ["got", "ton"]),
+    () =>
+      groupSum(
+        fR,
+        (r) => r[groupBy],
+        (r) => recvCalc(r, item),
+        ["got", "ton"]
+      ),
     [fR, groupBy, item]
   );
 
@@ -486,62 +637,119 @@ export default function Page() {
 
   // ----- bảng chi tiết trừ tồn NPP -----
   const needle = q.trim().toLowerCase();
+
   const tableRows = useMemo(() => {
-    const rank = { notstart: 0, processing: 1, finished: 2, norecv: 3 };
+    const rank = {
+      notstart: 0,
+      processing: 1,
+      finished: 2,
+      norecv: 3,
+    };
+
     return rrows
-      .filter((x) => !needle || [x.r.ten, x.r.ma, x.r.vung].join(" ").toLowerCase().includes(needle))
-      .sort((a, b) => rank[a.c.status] - rank[b.c.status] || b.c.ton - a.c.ton);
+      .filter(
+        (x) =>
+          !needle ||
+          [x.r.ten, x.r.ma, x.r.vung].join(" ").toLowerCase().includes(needle)
+      )
+      .sort(
+        (a, b) =>
+          rank[a.c.status] - rank[b.c.status] ||
+          b.c.remaining - a.c.remaining
+      );
   }, [rrows, needle]);
+
   const pendRows = useMemo(
-    () => pendGroups.filter((p) => !needle || (p.vung + " " + NO_LIST).toLowerCase().includes(needle)),
+    () =>
+      pendGroups.filter(
+        (p) => !needle || (p.vung + " " + NO_LIST).toLowerCase().includes(needle)
+      ),
     [pendGroups, needle]
   );
 
   const givenOf = (ma) => transfers.filter((t) => t.maRecv === ma);
-  const modalRecv = modal && modal.kind === "recv" ? receivers.find((r) => r.ma === modal.ma) : null;
-  const modalPend = modal && modal.kind === "pend" ? pendGroups.find((p) => p.vung === modal.vung) : null;
+
+  const modalRecv =
+    modal && modal.kind === "recv"
+      ? receivers.find((r) => r.ma === modal.ma)
+      : null;
+
+  const modalPend =
+    modal && modal.kind === "pend"
+      ? pendGroups.find((p) => p.vung === modal.vung)
+      : null;
+
   const closeModal = useCallback(() => setModal(null), []);
 
-  const METRIC_LABEL = { need: "SL cần điều tiết", done: "SL đã điều tiết", ton: "Tồn kho hiện tại" };
+  const METRIC_LABEL = {
+    need: "SL cần điều tiết",
+    done: "SL đã điều tiết",
+    ton: "Tồn kho hiện tại",
+    used: "SL VP đã trừ tồn (thực tế sử dụng)",
+    remaining: "SL còn lại cần trừ tồn",
+  };
 
   return (
     <div className="wrap">
       <div className="top">
         <div>
           <h1>Tracking điều tiết POSM &amp; trừ tồn kho</h1>
+
           <div className="sub">
             {loading && !data ? "Đang tải dữ liệu…" : null}
+
             {data
               ? "Nguồn: " +
                 (data.source === "sheet" ? "Google Sheet" : "file data/raw.json") +
-                (data.updatedAt ? " · cập nhật " + new Date(data.updatedAt).toLocaleString("vi-VN") : "")
+                (data.updatedAt
+                  ? " · cập nhật " + new Date(data.updatedAt).toLocaleString("vi-VN")
+                  : "")
               : null}
           </div>
         </div>
+
         <div className="controls">
-          <select value={mien} onChange={(e) => { setMien(e.target.value); setVung("all"); }}>
+          <select
+            value={mien}
+            onChange={(e) => {
+              setMien(e.target.value);
+              setVung("all");
+            }}
+          >
             <option value="all">Tất cả Miền</option>
             {mienOptions.map((m) => (
-              <option key={m} value={m}>{m}</option>
+              <option key={m} value={m}>
+                {m}
+              </option>
             ))}
           </select>
+
           <select value={vung} onChange={(e) => setVung(e.target.value)}>
             <option value="all">Tất cả Vùng</option>
             {vungOptions.map((v) => (
-              <option key={v} value={v}>{v}</option>
+              <option key={v} value={v}>
+                {v}
+              </option>
             ))}
           </select>
+
           <select value={item} onChange={(e) => setItem(e.target.value)}>
             <option value="all">Tất cả mặt hàng</option>
             {ITEMS.map((i) => (
-              <option key={i.key} value={i.key}>{i.label}</option>
+              <option key={i.key} value={i.key}>
+                {i.label}
+              </option>
             ))}
           </select>
-          <button onClick={load} disabled={loading}>{loading ? "Đang tải…" : "Làm mới"}</button>
+
+          <button onClick={load} disabled={loading}>
+            {loading ? "Đang tải…" : "Làm mới"}
+          </button>
         </div>
       </div>
 
       {err ? <div className="warn">Lỗi tải dữ liệu: {err}</div> : null}
+
       {data && data.warning ? (
         <div className="warn">
           {data.warning}. Dashboard đang tạm dùng dữ liệu trong file data/raw.json.
@@ -553,6 +761,7 @@ export default function Page() {
           {pendGroups.length > 0 ? (
             <div className="notice">
               <b>{NO_LIST}:</b>
+
               <ul>
                 {pendGroups.map((p) => (
                   <li key={p.vung}>
@@ -566,17 +775,33 @@ export default function Page() {
           <div className="grid kpis">
             <div className="card kpi">
               <div className="label">Tiến độ điều tiết · {itemLabel}</div>
-              <div className="big">{fmtPct(pctOf(dt.total.done, dt.total.need))}</div>
-              <div className="bar"><i style={{ width: Math.min(100, pctOf(dt.total.done, dt.total.need)) + "%" }} /></div>
+
+              <div className="big">
+                {fmtPct(pctOf(dt.total.done, dt.total.need))}
+              </div>
+
+              <div className="bar">
+                <i
+                  style={{
+                    width: Math.min(100, pctOf(dt.total.done, dt.total.need)) + "%",
+                  }}
+                />
+              </div>
+
               <div className="line2">
                 Đã {fmt(dt.total.done)} / cần {fmt(dt.total.need)} cái
               </div>
+
               <MiniBars rows={dt.perItem} />
             </div>
 
             <div className="card kpi">
-              <div className="label">Còn lại cần điều tiết (= cần − đã điều tiết)</div>
+              <div className="label">
+                Còn lại cần điều tiết (= cần − đã điều tiết)
+              </div>
+
               <div className="big">{fmt(dt.total.rem)}</div>
+
               <div className="line2">
                 {fmt(dt.total.need)} − {fmt(dt.total.done)} cái · {dt.pending} dòng điều tiết chưa xong
               </div>
@@ -584,20 +809,39 @@ export default function Page() {
 
             <div className="card kpi">
               <div className="label">Tiến độ trừ tồn · {itemLabel}</div>
-              <div className="big">{fmtPct(pctOf(tt.ton, tt.got))}</div>
-              <div className="bar blue"><i style={{ width: Math.min(100, pctOf(tt.ton, tt.got)) + "%" }} /></div>
-              <div className="line2">
-                Tồn hiện tại {fmt(tt.ton)} / SL đã điều tiết {fmt(tt.got)} cái
+
+              <div className="big">
+                {fmtPct(pctOf(tt.used, tt.got))}
               </div>
+
+              <div className="bar blue">
+                <i
+                  style={{
+                    width: Math.min(100, pctOf(tt.used, tt.got)) + "%",
+                  }}
+                />
+              </div>
+
+              <div className="line2">
+                Đã trừ tồn {fmt(tt.used)} / SL đã điều tiết {fmt(tt.got)} cái
+              </div>
+
               <MiniBars rows={tt.perItem} />
             </div>
 
             <div className="card kpi">
-              <div className="label">Còn lại cần trừ tồn (= tồn kho hiện tại)</div>
-              <div className="big">{fmt(tt.ton)}</div>
-              <div className="line2">
-                {tt.tonByItem.map((x) => x.label + " " + fmt(x.v)).join(" · ")}
+              <div className="label">
+                Còn lại cần trừ tồn (theo dữ liệu sheet)
               </div>
+
+              <div className="big">{fmt(tt.remaining)}</div>
+
+              <div className="line2">
+                {tt.remainingByItem
+                  .map((x) => x.label + " " + fmt(x.v))
+                  .join(" · ")}
+              </div>
+
               <div className="line2">
                 Chưa giải tồn: {tt.cnt.notstart} NPP · Đang xử lý: {tt.cnt.processing} NPP · Đã xong: {tt.cnt.finished} NPP
               </div>
@@ -607,7 +851,11 @@ export default function Page() {
           <div className="grid charts">
             <div className="card">
               <h3>Tiến độ điều tiết theo {groupLabel}</h3>
-              <div className="hint">Đã điều tiết vs còn lại · {itemLabel} · đơn vị: cái</div>
+
+              <div className="hint">
+                Đã điều tiết vs còn lại · {itemLabel} · đơn vị: cái
+              </div>
+
               <BarsChart
                 data={dt.byGroup}
                 needKey="need"
@@ -621,7 +869,11 @@ export default function Page() {
 
             <div className="card">
               <h3>Tồn hiện tại so với SL đã điều tiết theo {groupLabel}</h3>
-              <div className="hint">Chỉ tính NPP đã có danh sách nhận điều tiết · {itemLabel} · đơn vị: cái</div>
+
+              <div className="hint">
+                Chỉ tính NPP đã có danh sách nhận điều tiết · {itemLabel} · đơn vị: cái
+              </div>
+
               <BarsChart
                 data={byGroupStock}
                 series={[
@@ -632,8 +884,12 @@ export default function Page() {
             </div>
 
             <div className="card cardfull">
-              <h3>Top dòng điều tiết còn thiếu nhiều nhất</h3>
-              <div className="hint">NPP thực hiện điều tiết · 12 dòng đầu · di chuột để xem NPP nhận</div>
+              <h3>Top các NPP còn thiếu điều tiết</h3>
+
+              <div className="hint">
+                NPP thực hiện điều tiết · 12 dòng đầu · di chuột để xem NPP nhận
+              </div>
+
               <BarsChart
                 data={topDT}
                 needKey="need"
@@ -648,9 +904,11 @@ export default function Page() {
 
             <div className="card cardfull">
               <h3>Kiểm tra tồn kho hiện tại của từng NPP nhận điều tiết</h3>
+
               <div className="hint">
                 Sắp xếp theo tồn hiện tại giảm dần · {itemLabel} · bấm vào cột để xem tồn từng mặt hàng
               </div>
+
               <BarsChart
                 data={nppChart}
                 yWidth={380}
@@ -667,10 +925,12 @@ export default function Page() {
             <div className="tabhead">
               <div>
                 <h3 style={{ margin: 0 }}>Chi tiết trừ tồn NPP</h3>
+
                 <div className="hint" style={{ margin: 0 }}>
-                  {itemLabel} · đơn vị: cái · bấm vào số để xem chi tiết · tiến độ = tồn hiện tại / SL nhận điều tiết
+                  {itemLabel} · đơn vị: cái · bấm vào số để xem chi tiết · tiến độ = SL VP đã trừ tồn / SL đã điều tiết
                 </div>
               </div>
+
               <input
                 type="text"
                 placeholder="Tìm tên, mã NPP hoặc vùng…"
@@ -688,10 +948,12 @@ export default function Page() {
                     <th>SL nhận điều tiết</th>
                     <th>Tồn hiện tại</th>
                     <th>Đã trừ tồn</th>
+                    <th>SL còn lại cần trừ tồn</th>
                     <th>Tiến độ trừ tồn</th>
                     <th className="l">Trạng thái</th>
                   </tr>
                 </thead>
+
                 <tbody>
                   {tableRows.map(({ r, c }) => (
                     <tr key={r.ma}>
@@ -699,54 +961,105 @@ export default function Page() {
                         {r.ten}
                         <div style={{ color: "#6b7686", fontSize: 12 }}>{r.ma}</div>
                       </td>
+
                       <td className="l">{r.vung}</td>
+
                       <td>
-                        <button className="lnk" onClick={() => setModal({ kind: "recv", ma: r.ma, tab: "recv" })}>
+                        <button
+                          className="lnk"
+                          onClick={() =>
+                            setModal({ kind: "recv", ma: r.ma, tab: "recv" })
+                          }
+                        >
                           {fmt(c.got)}
                         </button>
-                        <span style={{ color: "#6b7686", fontSize: 12 }}> / cần {fmt(c.need)}</span>
+
+                        <span style={{ color: "#6b7686", fontSize: 12 }}>
+                          {" "} / cần {fmt(c.need)}
+                        </span>
                       </td>
+
                       <td>
-                        <button className="lnk" onClick={() => setModal({ kind: "recv", ma: r.ma, tab: "stock" })}>
+                        <button
+                          className="lnk"
+                          onClick={() =>
+                            setModal({ kind: "recv", ma: r.ma, tab: "stock" })
+                          }
+                        >
                           {fmt(c.ton)}
                         </button>
                       </td>
-                      <td>{fmt(c.paid)}</td>
+
+                      <td>{fmt(c.used)}</td>
+
+                      <td>{fmt(c.remaining)}</td>
+
                       <td>
                         {c.got > 0 ? (
-                          <div style={{ display: "flex", gap: 8, alignItems: "center", justifyContent: "flex-end" }}>
+                          <div
+                            style={{
+                              display: "flex",
+                              gap: 8,
+                              alignItems: "center",
+                              justifyContent: "flex-end",
+                            }}
+                          >
                             <div className="bar blue" style={{ width: 70 }}>
-                              <i style={{ width: Math.min(100, c.pct) + "%" }} />
+                              <i
+                                style={{
+                                  width: Math.min(100, c.pct) + "%",
+                                }}
+                              />
                             </div>
+
                             <b>{fmtPct(c.pct)}</b>
                           </div>
                         ) : (
                           "–"
                         )}
                       </td>
-                      <td className="l"><Badge kind={c.status} /></td>
+
+                      <td className="l">
+                        <Badge kind={c.status} />
+                      </td>
                     </tr>
                   ))}
+
                   {pendRows.map((p) => (
                     <tr key={"pend-" + p.vung} className="pend">
                       <td className="name l">
                         <i>Vùng {p.vung}</i>
-                        <div style={{ color: "#6b7686", fontSize: 12 }}>{p.givers.length} NPP cần điều tiết</div>
+                        <div style={{ color: "#6b7686", fontSize: 12 }}>
+                          {p.givers.length} NPP cần điều tiết
+                        </div>
                       </td>
+
                       <td className="l">{p.vung}</td>
+
                       <td>
-                        <button className="lnk" onClick={() => setModal({ kind: "pend", vung: p.vung })}>
+                        <button
+                          className="lnk"
+                          onClick={() =>
+                            setModal({ kind: "pend", vung: p.vung })
+                          }
+                        >
                           cần điều tiết {fmt(p.need)}
                         </button>
                       </td>
+
                       <td>–</td>
                       <td>–</td>
                       <td>–</td>
-                      <td className="l"><Badge kind="pend" /></td>
+                      <td>–</td>
+
+                      <td className="l">
+                        <Badge kind="pend" />
+                      </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
+
               {tableRows.length + pendRows.length === 0 ? (
                 <div className="empty">Không có dòng nào khớp bộ lọc</div>
               ) : null}
@@ -755,16 +1068,28 @@ export default function Page() {
 
           {data.layout ? (
             <details style={{ marginTop: 14, fontSize: 12, color: "#6b7686" }}>
-              <summary style={{ cursor: "pointer" }}>Kiểm tra cột dữ liệu đang đọc từ sheet</summary>
+              <summary style={{ cursor: "pointer" }}>
+                Kiểm tra cột dữ liệu đang đọc từ sheet
+              </summary>
+
               <div style={{ marginTop: 6 }}>
                 {Object.keys(METRIC_LABEL).map((k) => {
                   const m = data.layout[k];
                   if (!m) return null;
+
                   return (
                     <div key={k} style={{ marginBottom: 4 }}>
                       <b>{METRIC_LABEL[k]}:</b>{" "}
-                      {m.cols.map((c) => c.item + " = cột " + c.letter + " (" + c.header + ")").join(" · ")}
-                      {m.detected ? "" : " ⚠ không tìm thấy tiêu đề, đang dùng vị trí mặc định"}
+                      {m.cols
+                        .map(
+                          (c) =>
+                            c.item + " = cột " + c.letter + " (" + c.header + ")"
+                        )
+                        .join(" · ")}
+
+                      {m.detected
+                        ? ""
+                        : " ⚠ không tìm thấy tiêu đề, đang dùng vị trí mặc định"}
                     </div>
                   );
                 })}
@@ -783,7 +1108,10 @@ export default function Page() {
           onClose={closeModal}
         />
       ) : null}
-      {modalPend ? <PendDetail p={modalPend} onClose={closeModal} /> : null}
+
+      {modalPend ? (
+        <PendDetail p={modalPend} onClose={closeModal} />
+      ) : null}
     </div>
   );
 }
