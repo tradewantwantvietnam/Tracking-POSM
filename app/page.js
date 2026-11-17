@@ -11,34 +11,24 @@ import {
   CartesianGrid,
   ResponsiveContainer,
 } from "recharts";
-import { ITEMS, PRICE, WEIGHT } from "../lib/transform";
+import { ITEMS } from "../lib/transform";
 
 const COLORS = {
   done: "#22a06b",
-  ded: "#2f6fed",
   rem: "#f0a020",
-  over: "#e5484d",
+  need: "#2f6fed",
+  ton: "#22a06b",
 };
 
+const NO_LIST = "ASM chưa chốt DS điều tiết";
+
 // ---------- tiện ích ----------
-// Hệ số nhân theo chế độ xem: Số lượng = 1, Quy đổi = balo 2, Giá trị = đơn giá
-const weightOf = (k, metric) => (metric === "value" ? PRICE[k] : metric === "conv" ? WEIGHT[k] : 1);
-
 const keysOf = (item) => (item === "all" ? ITEMS.map((i) => i.key) : [item]);
-
-function fmt(n, metric) {
-  const v = Number(n) || 0;
-  if (metric === "value") {
-    const a = Math.abs(v);
-    if (a >= 1e9) return (v / 1e9).toLocaleString("vi-VN", { maximumFractionDigits: 2 }) + " tỷ";
-    if (a >= 1e6) return (v / 1e6).toLocaleString("vi-VN", { maximumFractionDigits: 1 }) + " tr";
-    return v.toLocaleString("vi-VN");
-  }
-  return v.toLocaleString("vi-VN", { maximumFractionDigits: 0 });
-}
-
+const fmt = (n) => (Number(n) || 0).toLocaleString("vi-VN", { maximumFractionDigits: 0 });
 const pctOf = (a, b) => (b > 0 ? (a / b) * 100 : 0);
-const fmtPct = (p) => (Number.isFinite(p) ? p.toLocaleString("vi-VN", { maximumFractionDigits: 1 }) + "%" : "0%");
+const fmtPct = (p) =>
+  Number.isFinite(p) ? p.toLocaleString("vi-VN", { maximumFractionDigits: 1 }) + "%" : "0%";
+const trio = (o) => fmt(o.at) + " / " + fmt(o.bl) + " / " + fmt(o.kd);
 
 function shortName(s, max = 26) {
   const t = String(s || "")
@@ -49,34 +39,32 @@ function shortName(s, max = 26) {
   return t.length > max ? t.slice(0, max - 1) + "…" : t;
 }
 
-// Tính cho 1 dòng điều tiết (NPP giao -> NPP nhận)
-function transCalc(t, item, metric) {
+// 1 dòng điều tiết (NPP giao -> NPP nhận)
+function transCalc(t, item) {
   let need = 0;
   let done = 0;
   for (const k of keysOf(item)) {
-    const w = weightOf(k, metric);
-    need += t.need[k] * w;
-    done += t.done[k] * w;
+    need += t.need[k];
+    done += t.done[k];
   }
   return { need, done, rem: Math.max(need - done, 0) };
 }
 
-// Tính cho 1 NPP nhận (trừ tồn). Cắt giới hạn theo từng mặt hàng trước khi cộng.
-function recvCalc(r, item, metric) {
-  let need = 0, ded = 0, rem = 0, over = 0, ton = 0, sd = 0, tt = 0;
-  for (const k of keysOf(item)) {
-    const w = weightOf(k, metric);
-    const n = r.need[k];
-    const t = r.tt[k];
-    need += n * w;
-    ded += Math.min(t, n) * w;
-    rem += Math.max(n - t, 0) * w;
-    over += Math.max(t - n, 0) * w;
-    ton += r.ton[k] * w;
-    sd += r.sd[k] * w;
-    tt += t * w;
+// 1 NPP nhận: nhận điều tiết vs tồn hiện tại
+function recvCalc(r, item) {
+  const keys = keysOf(item);
+  let need = 0, got = 0, ton = 0, covered = 0;
+  let short = false;
+  for (const k of keys) {
+    need += r.need[k];
+    got += r.done[k];
+    ton += r.ton[k];
+    covered += Math.min(r.ton[k], r.need[k]);
+    if (r.need[k] > 0 && r.ton[k] < r.need[k]) short = true;
   }
-  return { need, ded, rem, over, ton, sd, tt };
+  let status = "none";
+  if (need > 0) status = !short ? "ok" : covered === 0 ? "out" : "low";
+  return { need, got, ton, pct: pctOf(ton, need), status };
 }
 
 function groupSum(list, keyFn, calcFn, fields) {
@@ -96,36 +84,51 @@ function groupSum(list, keyFn, calcFn, fields) {
 }
 
 // ---------- thành phần nhỏ ----------
-function Tip({ active, payload, label, metric, needKey }) {
+function Tip({ active, payload, label, needKey }) {
   if (!active || !payload || !payload.length) return null;
   const row = payload[0].payload;
-  const need = row[needKey] || 0;
   return (
     <div style={{ background: "#fff", border: "1px solid #e3e8ef", borderRadius: 8, padding: "8px 10px", fontSize: 12 }}>
       <div style={{ fontWeight: 700, marginBottom: 4 }}>{row.full || label}</div>
       {payload.map((p) => (
         <div key={p.dataKey} style={{ color: p.color }}>
-          {p.name}: <b>{fmt(p.value, metric)}</b>
+          {p.name}: <b>{fmt(p.value)}</b>
         </div>
       ))}
-      <div style={{ marginTop: 4, color: "#6b7686" }}>Tổng cần: {fmt(need, metric)}</div>
+      {needKey ? <div style={{ marginTop: 4, color: "#6b7686" }}>Tổng cần: {fmt(row[needKey] || 0)}</div> : null}
     </div>
   );
 }
 
-function StackChart({ data, series, metric, needKey, height }) {
+function BarsChart({ data, series, stacked, needKey, height, onPick }) {
   if (!data.length) return <div className="empty">Không có dữ liệu</div>;
-  const h = height || Math.max(180, data.length * 30 + 70);
+  const perRow = stacked ? 30 : 46;
+  const h = height || Math.max(180, data.length * perRow + 70);
   return (
     <ResponsiveContainer width="100%" height={h}>
       <BarChart data={data} layout="vertical" margin={{ top: 4, right: 16, left: 4, bottom: 4 }}>
         <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#e3e8ef" />
-        <XAxis type="number" tickFormatter={(v) => fmt(v, metric)} fontSize={11} />
-        <YAxis type="category" dataKey="name" width={150} fontSize={11} interval={0} />
-        <Tooltip content={<Tip metric={metric} needKey={needKey} />} />
+        <XAxis type="number" tickFormatter={(v) => fmt(v)} fontSize={11} />
+        <YAxis type="category" dataKey="name" width={170} fontSize={11} interval={0} />
+        <Tooltip content={<Tip needKey={needKey} />} />
         <Legend wrapperStyle={{ fontSize: 12 }} />
         {series.map((s) => (
-          <Bar key={s.key} dataKey={s.key} name={s.name} stackId="a" fill={s.color} />
+          <Bar
+            key={s.key}
+            dataKey={s.key}
+            name={s.name}
+            fill={s.color}
+            stackId={stacked ? "a" : undefined}
+            cursor={onPick ? "pointer" : undefined}
+            onClick={
+              onPick
+                ? (d) => {
+                    const row = (d && d.payload) || d;
+                    if (row && row.ma) onPick(row.ma);
+                  }
+                : undefined
+            }
+          />
         ))}
       </BarChart>
     </ResponsiveContainer>
@@ -150,13 +153,171 @@ function MiniBars({ rows }) {
 
 function Badge({ kind }) {
   const map = {
-    done: ["b-done", "Hoàn tất"],
-    part: ["b-part", "Một phần"],
-    none: ["b-none", "Chưa làm"],
-    over: ["b-over", "Trừ dư"],
+    ok: ["b-done", "Đủ tồn"],
+    low: ["b-part", "Thiếu tồn"],
+    out: ["b-over", "Hết tồn"],
+    pend: ["b-warn", NO_LIST],
+    gdone: ["b-done", "Đã điều tiết"],
+    gpart: ["b-part", "Một phần"],
+    gnone: ["b-over", "Chưa điều tiết"],
+    none: ["b-none", "–"],
   };
-  const [cls, text] = map[kind];
+  const [cls, text] = map[kind] || map.none;
   return <span className={"badge " + cls}>{text}</span>;
+}
+
+function Modal({ title, sub, onClose, children }) {
+  useEffect(() => {
+    const h = (e) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", h);
+    return () => window.removeEventListener("keydown", h);
+  }, [onClose]);
+  return (
+    <div className="overlay" onClick={onClose}>
+      <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <div className="mhead">
+          <h3>{title}</h3>
+          <button onClick={onClose}>Đóng</button>
+        </div>
+        {sub ? <div className="msub">{sub}</div> : null}
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function giverKind(t) {
+  const need = t.need.at + t.need.bl + t.need.kd;
+  const done = t.done.at + t.done.bl + t.done.kd;
+  if (need > 0 && done >= need) return "gdone";
+  if (done > 0) return "gpart";
+  return "gnone";
+}
+
+// Cửa sổ chi tiết của 1 NPP nhận
+function RecvDetail({ r, givers, tab, setTab, onClose }) {
+  const sorted = [...givers].sort((a, b) => {
+    const rank = { gnone: 0, gpart: 1, gdone: 2 };
+    return rank[giverKind(a)] - rank[giverKind(b)];
+  });
+  const nDone = givers.filter((t) => giverKind(t) === "gdone").length;
+  const nPart = givers.filter((t) => giverKind(t) === "gpart").length;
+  const nNone = givers.length - nDone - nPart;
+
+  return (
+    <Modal title={r.ten} sub={r.ma + " · " + r.vung + " · " + r.mien} onClose={onClose}>
+      <div className="seg">
+        <button className={tab === "recv" ? "on" : ""} onClick={() => setTab("recv")}>SL nhận điều tiết</button>
+        <button className={tab === "stock" ? "on" : ""} onClick={() => setTab("stock")}>Tồn kho hiện tại</button>
+      </div>
+
+      {tab === "stock" ? (
+        <>
+          <div className="stats">
+            {ITEMS.map((i) => (
+              <div className="stat" key={i.key}>
+                <div className="k">{i.label} còn trong kho</div>
+                <div className="v">{fmt(r.ton[i.key])}</div>
+              </div>
+            ))}
+          </div>
+          <div className="tablewrap">
+            <table>
+              <thead>
+                <tr>
+                  <th className="l">Mặt hàng</th>
+                  <th>Tồn hiện tại</th>
+                  <th>SL nhận điều tiết</th>
+                  <th>Tồn − nhận</th>
+                  <th className="l">Trạng thái</th>
+                </tr>
+              </thead>
+              <tbody>
+                {ITEMS.map((i) => {
+                  const ton = r.ton[i.key];
+                  const need = r.need[i.key];
+                  const kind = need === 0 ? "none" : ton >= need ? "ok" : ton === 0 ? "out" : "low";
+                  return (
+                    <tr key={i.key}>
+                      <td className="l">{i.label}</td>
+                      <td>{fmt(ton)}</td>
+                      <td>{fmt(need)}</td>
+                      <td className={ton - need < 0 ? "neg" : ""}>{fmt(ton - need)}</td>
+                      <td className="l"><Badge kind={kind} /></td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </>
+      ) : (
+        <>
+          <div className="summary">
+            <span className="badge b-done">Đã điều tiết: {nDone} NPP</span>
+            <span className="badge b-part">Một phần: {nPart} NPP</span>
+            <span className="badge b-over">Chưa điều tiết: {nNone} NPP</span>
+          </div>
+          <div className="hint" style={{ color: "#6b7686", fontSize: 12, marginBottom: 8 }}>
+            Số hiển thị theo thứ tự: Áo thun / Balo / Khay đá
+          </div>
+          <div className="tablewrap">
+            <table>
+              <thead>
+                <tr>
+                  <th className="l">NPP thực hiện điều tiết</th>
+                  <th>Cần điều tiết</th>
+                  <th>Đã điều tiết</th>
+                  <th className="l">Trạng thái</th>
+                </tr>
+              </thead>
+              <tbody>
+                {sorted.map((t) => (
+                  <tr key={t.id}>
+                    <td className="name l">{t.tenGive}<div style={{ color: "#6b7686", fontSize: 12 }}>{t.maGive}</div></td>
+                    <td>{trio(t.need)}</td>
+                    <td>{trio(t.done)}</td>
+                    <td className="l"><Badge kind={giverKind(t)} /></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+    </Modal>
+  );
+}
+
+// Cửa sổ chi tiết của vùng chưa chốt DS điều tiết
+function PendDetail({ p, onClose }) {
+  return (
+    <Modal title={"Vùng " + p.vung + ": " + NO_LIST} sub={p.mien} onClose={onClose}>
+      <div className="hint" style={{ color: "#6b7686", fontSize: 12, marginBottom: 8 }}>
+        Các NPP cần điều tiết nhưng ASM chưa chốt NPP nhận. Số hiển thị theo thứ tự: Áo thun / Balo / Khay đá
+      </div>
+      <div className="tablewrap">
+        <table>
+          <thead>
+            <tr>
+              <th className="l">NPP cần điều tiết</th>
+              <th>Cần điều tiết</th>
+            </tr>
+          </thead>
+          <tbody>
+            {p.givers.map((t) => (
+              <tr key={t.id}>
+                <td className="name l">{t.tenGive}<div style={{ color: "#6b7686", fontSize: 12 }}>{t.maGive}</div></td>
+                <td>{trio(t.need)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </Modal>
+  );
 }
 
 // ---------- trang chính ----------
@@ -167,9 +328,8 @@ export default function Page() {
   const [mien, setMien] = useState("all");
   const [vung, setVung] = useState("all");
   const [item, setItem] = useState("all");
-  const [metric, setMetric] = useState("qty");
-  const [tab, setTab] = useState("dt");
   const [q, setQ] = useState("");
+  const [modal, setModal] = useState(null); // {kind:'recv', ma, tab} | {kind:'pend', vung}
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -220,10 +380,11 @@ export default function Page() {
 
   const groupBy = mien === "all" ? "mien" : "vung";
   const groupLabel = mien === "all" ? "Miền" : "Vùng";
+  const itemLabel = item === "all" ? "Tất cả mặt hàng" : ITEMS.find((i) => i.key === item).label;
 
-  // ----- tính toán điều tiết -----
+  // ----- điều tiết -----
   const dt = useMemo(() => {
-    const calc = (t) => transCalc(t, item, metric);
+    const calc = (t) => transCalc(t, item);
     const total = fT.reduce(
       (a, t) => {
         const c = calc(t);
@@ -242,35 +403,60 @@ export default function Page() {
       return { label: i.label, pct: pctOf(d, n) };
     });
     const pending = rows.filter((x) => x.c.rem > 0).length;
-    const noRecv = fT.filter((t) => !t.maRecv).length;
-    return { total, byGroup, rows, perItem, pending, noRecv };
-  }, [fT, item, metric, groupBy]);
+    return { total, byGroup, rows, perItem, pending };
+  }, [fT, item, groupBy]);
 
-  // ----- tính toán trừ tồn -----
+  // ----- vùng chưa chốt DS điều tiết (NPP chưa có NPP nhận) -----
+  const pendGroups = useMemo(() => {
+    const m = new Map();
+    for (const t of fT) {
+      if (t.maRecv) continue;
+      const key = t.vung || "(chưa rõ)";
+      if (!m.has(key)) m.set(key, { vung: key, mien: t.mien, givers: [], need: 0 });
+      const g = m.get(key);
+      g.givers.push(t);
+      g.need += transCalc(t, item).need;
+    }
+    return Array.from(m.values());
+  }, [fT, item]);
+
+  // ----- trừ tồn (NPP nhận) -----
+  const rrows = useMemo(() => fR.map((r) => ({ r, c: recvCalc(r, item) })), [fR, item]);
+
   const tt = useMemo(() => {
-    const calc = (r) => recvCalc(r, item, metric);
-    const total = fR.reduce(
-      (a, r) => {
-        const c = calc(r);
-        a.need += c.need;
-        a.ded += c.ded;
-        a.rem += c.rem;
-        a.over += c.over;
-        return a;
-      },
-      { need: 0, ded: 0, rem: 0, over: 0 }
-    );
-    const byGroup = groupSum(fR, (r) => r[groupBy], calc, ["need", "ded", "rem", "over"]);
-    const rows = fR.map((r) => ({ r, c: calc(r) }));
+    const need = rrows.reduce((s, x) => s + x.c.need, 0);
+    const ton = rrows.reduce((s, x) => s + x.c.ton, 0);
     const perItem = ITEMS.map((i) => {
       const n = fR.reduce((s, r) => s + r.need[i.key], 0);
-      const d = fR.reduce((s, r) => s + Math.min(r.tt[i.key], r.need[i.key]), 0);
-      return { label: i.label, pct: pctOf(d, n), blue: true };
+      const t = fR.reduce((s, r) => s + r.ton[i.key], 0);
+      return { label: i.label, pct: pctOf(t, n), blue: true };
     });
-    const pending = rows.filter((x) => x.c.rem > 0).length;
-    const overCount = rows.filter((x) => x.c.over > 0).length;
-    return { total, byGroup, rows, perItem, pending, overCount };
-  }, [fR, item, metric, groupBy]);
+    const tonByItem = ITEMS.map((i) => ({
+      label: i.label,
+      v: fR.reduce((s, r) => s + r.ton[i.key], 0),
+    }));
+    const lowCount = rrows.filter((x) => x.c.status === "low" || x.c.status === "out").length;
+    return { need, ton, perItem, tonByItem, lowCount };
+  }, [rrows, fR]);
+
+  const byGroupStock = useMemo(
+    () => groupSum(fR, (r) => r[groupBy], (r) => recvCalc(r, item), ["need", "ton"]),
+    [fR, groupBy, item]
+  );
+
+  const nppChart = useMemo(
+    () =>
+      [...rrows]
+        .sort((a, b) => b.c.need - b.c.ton - (a.c.need - a.c.ton))
+        .map((x) => ({
+          ma: x.r.ma,
+          name: shortName(x.r.ten, 26) + " (" + x.r.ma.replace("WWG_GT_", "") + ")",
+          full: x.r.ten + " (" + x.r.ma + ")",
+          need: x.c.need,
+          ton: x.c.ton,
+        })),
+    [rrows]
+  );
 
   const topDT = useMemo(
     () =>
@@ -280,7 +466,10 @@ export default function Page() {
         .slice(0, 12)
         .map((x) => ({
           name: shortName(x.t.tenGive),
-          full: x.t.tenGive + " → " + (x.t.tenRecv ? shortName(x.t.tenRecv, 30) : "chưa có NPP nhận"),
+          full:
+            x.t.tenGive +
+            " → " +
+            (x.t.tenRecv ? shortName(x.t.tenRecv, 30) : "Vùng " + x.t.vung + ": " + NO_LIST),
           need: x.c.need,
           done: x.c.done,
           rem: x.c.rem,
@@ -288,45 +477,26 @@ export default function Page() {
     [dt.rows]
   );
 
-  const topTT = useMemo(
-    () =>
-      tt.rows
-        .filter((x) => x.c.rem > 0 || x.c.over > 0)
-        .sort((a, b) => b.c.rem + b.c.over - (a.c.rem + a.c.over))
-        .slice(0, 12)
-        .map((x) => ({
-          name: shortName(x.r.ten),
-          full: x.r.ten + " (" + x.r.ma + ")",
-          need: x.c.need,
-          ded: x.c.ded,
-          rem: x.c.rem,
-          over: x.c.over,
-        })),
-    [tt.rows]
-  );
-
+  // ----- bảng chi tiết trừ tồn NPP -----
   const needle = q.trim().toLowerCase();
-  const dtTable = useMemo(
-    () =>
-      dt.rows
-        .filter(
-          (x) =>
-            !needle ||
-            [x.t.tenGive, x.t.maGive, x.t.tenRecv, x.t.maRecv].join(" ").toLowerCase().includes(needle)
-        )
-        .sort((a, b) => b.c.rem - a.c.rem),
-    [dt.rows, needle]
-  );
-  const ttTable = useMemo(
-    () =>
-      tt.rows
-        .filter((x) => !needle || [x.r.ten, x.r.ma].join(" ").toLowerCase().includes(needle))
-        .sort((a, b) => b.c.rem + b.c.over - (a.c.rem + a.c.over)),
-    [tt.rows, needle]
+  const tableRows = useMemo(() => {
+    const rank = { out: 0, low: 1, ok: 2, none: 3 };
+    return rrows
+      .filter((x) => !needle || [x.r.ten, x.r.ma, x.r.vung].join(" ").toLowerCase().includes(needle))
+      .sort(
+        (a, b) =>
+          rank[a.c.status] - rank[b.c.status] || b.c.need - b.c.ton - (a.c.need - a.c.ton)
+      );
+  }, [rrows, needle]);
+  const pendRows = useMemo(
+    () => pendGroups.filter((p) => !needle || (p.vung + " " + NO_LIST).toLowerCase().includes(needle)),
+    [pendGroups, needle]
   );
 
-  const itemLabel = item === "all" ? "Tất cả mặt hàng" : ITEMS.find((i) => i.key === item).label;
-  const unit = metric === "value" ? "VND" : metric === "conv" ? "điểm quy đổi" : "cái";
+  const givenOf = (ma) => transfers.filter((t) => t.maRecv === ma);
+  const modalRecv = modal && modal.kind === "recv" ? receivers.find((r) => r.ma === modal.ma) : null;
+  const modalPend = modal && modal.kind === "pend" ? pendGroups.find((p) => p.vung === modal.vung) : null;
+  const closeModal = useCallback(() => setModal(null), []);
 
   return (
     <div className="wrap">
@@ -361,11 +531,6 @@ export default function Page() {
               <option key={i.key} value={i.key}>{i.label}</option>
             ))}
           </select>
-          <div className="seg">
-            <button className={metric === "qty" ? "on" : ""} onClick={() => setMetric("qty")}>Số lượng</button>
-            <button className={metric === "conv" ? "on" : ""} onClick={() => setMetric("conv")} title="Balo = 2, Áo thun = 1, Khay đá = 1">Quy đổi</button>
-            <button className={metric === "value" ? "on" : ""} onClick={() => setMetric("value")}>Giá trị</button>
-          </div>
           <button onClick={load} disabled={loading}>{loading ? "Đang tải…" : "Làm mới"}</button>
         </div>
       </div>
@@ -379,56 +544,66 @@ export default function Page() {
 
       {data ? (
         <>
+          {pendGroups.length > 0 ? (
+            <div className="notice">
+              <b>{NO_LIST}:</b>
+              <ul>
+                {pendGroups.map((p) => (
+                  <li key={p.vung}>
+                    Vùng {p.vung} chưa chốt DS điều tiết ({p.givers.length} NPP, cần điều tiết {fmt(p.need)} cái)
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+
           <div className="grid kpis">
             <div className="card kpi">
               <div className="label">Tiến độ điều tiết · {itemLabel}</div>
               <div className="big">{fmtPct(pctOf(dt.total.done, dt.total.need))}</div>
               <div className="bar"><i style={{ width: Math.min(100, pctOf(dt.total.done, dt.total.need)) + "%" }} /></div>
               <div className="line2">
-                Đã {fmt(dt.total.done, metric)} / cần {fmt(dt.total.need, metric)} {unit}
+                Đã {fmt(dt.total.done)} / cần {fmt(dt.total.need)} cái
               </div>
               <MiniBars rows={dt.perItem} />
             </div>
 
             <div className="card kpi">
               <div className="label">Tiến độ trừ tồn · {itemLabel}</div>
-              <div className="big">{fmtPct(pctOf(tt.total.ded, tt.total.need))}</div>
-              <div className="bar blue"><i style={{ width: Math.min(100, pctOf(tt.total.ded, tt.total.need)) + "%" }} /></div>
+              <div className="big">{fmtPct(pctOf(tt.ton, tt.need))}</div>
+              <div className="bar blue"><i style={{ width: Math.min(100, pctOf(tt.ton, tt.need)) + "%" }} /></div>
               <div className="line2">
-                Đã {fmt(tt.total.ded, metric)} / cần {fmt(tt.total.need, metric)} {unit}
+                Tồn hiện tại {fmt(tt.ton)} / SL nhận điều tiết {fmt(tt.need)} cái
               </div>
               <MiniBars rows={tt.perItem} />
             </div>
 
             <div className="card kpi">
               <div className="label">Còn lại cần điều tiết</div>
-              <div className="big">{fmt(dt.total.rem, metric)}</div>
-              <div className="line2">{unit} · {dt.pending} dòng điều tiết chưa xong</div>
-              {dt.noRecv > 0 ? (
-                <div className="line2">{dt.noRecv} dòng chưa có NPP nhận điều tiết</div>
-              ) : null}
+              <div className="big">{fmt(dt.total.rem)}</div>
+              <div className="line2">cái · {dt.pending} dòng điều tiết chưa xong</div>
             </div>
 
             <div className="card kpi">
-              <div className="label">Còn lại cần trừ tồn</div>
-              <div className="big">{fmt(tt.total.rem, metric)}</div>
-              <div className="line2">{unit} · {tt.pending}/{tt.rows.length} NPP nhận chưa trừ xong</div>
-              {tt.overCount > 0 ? (
-                <div className="line2" style={{ color: "#e5484d" }}>
-                  {tt.overCount} NPP trừ dư, tổng dư {fmt(tt.total.over, metric)} {unit}
-                </div>
-              ) : null}
+              <div className="label">Còn lại cần trừ tồn (= tồn kho hiện tại)</div>
+              <div className="big">{fmt(tt.ton)}</div>
+              <div className="line2">
+                {tt.tonByItem.map((x) => x.label + " " + fmt(x.v)).join(" · ")}
+              </div>
+              <div className="line2">
+                {tt.lowCount}/{rrows.length} NPP nhận chưa đủ tồn so với SL nhận điều tiết
+              </div>
             </div>
           </div>
 
           <div className="grid charts">
             <div className="card">
               <h3>Tiến độ điều tiết theo {groupLabel}</h3>
-              <div className="hint">Đã điều tiết vs còn lại · {itemLabel} · đơn vị: {unit}</div>
-              <StackChart
+              <div className="hint">Đã điều tiết vs còn lại · {itemLabel} · đơn vị: cái</div>
+              <BarsChart
                 data={dt.byGroup}
                 needKey="need"
-                metric={metric}
+                stacked
                 series={[
                   { key: "done", name: "Đã điều tiết", color: COLORS.done },
                   { key: "rem", name: "Còn lại", color: COLORS.rem },
@@ -437,16 +612,13 @@ export default function Page() {
             </div>
 
             <div className="card">
-              <h3>Tiến độ trừ tồn theo {groupLabel}</h3>
-              <div className="hint">Đã trừ vs còn lại cần trừ (đỏ = trừ dư) · {itemLabel} · đơn vị: {unit}</div>
-              <StackChart
-                data={tt.byGroup}
-                needKey="need"
-                metric={metric}
+              <h3>Tồn hiện tại so với SL nhận điều tiết theo {groupLabel}</h3>
+              <div className="hint">Chỉ tính NPP đã có danh sách nhận điều tiết · {itemLabel} · đơn vị: cái</div>
+              <BarsChart
+                data={byGroupStock}
                 series={[
-                  { key: "ded", name: "Đã trừ", color: COLORS.ded },
-                  { key: "rem", name: "Còn lại cần trừ", color: COLORS.rem },
-                  { key: "over", name: "Trừ dư", color: COLORS.over },
+                  { key: "need", name: "SL nhận điều tiết", color: COLORS.need },
+                  { key: "ton", name: "Tồn hiện tại", color: COLORS.ton },
                 ]}
               />
             </div>
@@ -454,10 +626,10 @@ export default function Page() {
             <div className="card">
               <h3>Top dòng điều tiết còn thiếu nhiều nhất</h3>
               <div className="hint">NPP thực hiện điều tiết · 12 dòng đầu · di chuột để xem NPP nhận</div>
-              <StackChart
+              <BarsChart
                 data={topDT}
                 needKey="need"
-                metric={metric}
+                stacked
                 series={[
                   { key: "done", name: "Đã điều tiết", color: COLORS.done },
                   { key: "rem", name: "Còn lại", color: COLORS.rem },
@@ -465,17 +637,17 @@ export default function Page() {
               />
             </div>
 
-            <div className="card">
-              <h3>Top NPP nhận còn phải trừ tồn nhiều nhất</h3>
-              <div className="hint">12 NPP đầu · đơn vị: {unit}</div>
-              <StackChart
-                data={topTT}
-                needKey="need"
-                metric={metric}
+            <div className="card cardfull">
+              <h3>Kiểm tra tồn kho hiện tại của từng NPP nhận điều tiết</h3>
+              <div className="hint">
+                Sắp xếp NPP thiếu tồn nhiều nhất lên đầu · {itemLabel} · bấm vào cột để xem tồn từng mặt hàng
+              </div>
+              <BarsChart
+                data={nppChart}
+                onPick={(ma) => setModal({ kind: "recv", ma, tab: "stock" })}
                 series={[
-                  { key: "ded", name: "Đã trừ", color: COLORS.ded },
-                  { key: "rem", name: "Còn lại cần trừ", color: COLORS.rem },
-                  { key: "over", name: "Trừ dư", color: COLORS.over },
+                  { key: "need", name: "SL nhận điều tiết", color: COLORS.need },
+                  { key: "ton", name: "Tồn hiện tại", color: COLORS.ton },
                 ]}
               />
             </div>
@@ -483,96 +655,102 @@ export default function Page() {
 
           <div className="card">
             <div className="tabhead">
-              <div className="seg">
-                <button className={tab === "dt" ? "on" : ""} onClick={() => setTab("dt")}>Chi tiết điều tiết</button>
-                <button className={tab === "tt" ? "on" : ""} onClick={() => setTab("tt")}>Chi tiết trừ tồn (NPP nhận)</button>
+              <div>
+                <h3 style={{ margin: 0 }}>Chi tiết trừ tồn NPP</h3>
+                <div className="hint" style={{ margin: 0 }}>
+                  {itemLabel} · đơn vị: cái · bấm vào số để xem chi tiết · tiến độ = tồn hiện tại / SL nhận điều tiết
+                </div>
               </div>
               <input
                 type="text"
-                placeholder="Tìm tên hoặc mã NPP…"
+                placeholder="Tìm tên, mã NPP hoặc vùng…"
                 value={q}
                 onChange={(e) => setQ(e.target.value)}
               />
             </div>
-            <div className="hint">
-              {itemLabel} · đơn vị: {unit} · sắp xếp theo phần còn lại giảm dần
-            </div>
 
             <div className="tablewrap">
-              {tab === "dt" ? (
-                <table>
-                  <thead>
-                    <tr>
-                      <th className="l">NPP thực hiện điều tiết</th>
-                      <th className="l">NPP nhận</th>
-                      <th className="l">Vùng</th>
-                      <th>Cần</th>
-                      <th>Đã</th>
-                      <th>Còn lại</th>
-                      <th>%</th>
-                      <th className="l">Trạng thái</th>
+              <table>
+                <thead>
+                  <tr>
+                    <th className="l">NPP nhận điều tiết</th>
+                    <th className="l">Vùng</th>
+                    <th>SL đã nhận / cần nhận</th>
+                    <th>Tồn hiện tại</th>
+                    <th>Tiến độ trừ tồn</th>
+                    <th className="l">Trạng thái</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {tableRows.map(({ r, c }) => (
+                    <tr key={r.ma}>
+                      <td className="name l">
+                        {r.ten}
+                        <div style={{ color: "#6b7686", fontSize: 12 }}>{r.ma}</div>
+                      </td>
+                      <td className="l">{r.vung}</td>
+                      <td>
+                        <button className="lnk" onClick={() => setModal({ kind: "recv", ma: r.ma, tab: "recv" })}>
+                          {fmt(c.got)} / {fmt(c.need)}
+                        </button>
+                      </td>
+                      <td>
+                        <button className="lnk" onClick={() => setModal({ kind: "recv", ma: r.ma, tab: "stock" })}>
+                          {fmt(c.ton)}
+                        </button>
+                      </td>
+                      <td>
+                        {c.need > 0 ? (
+                          <div style={{ display: "flex", gap: 8, alignItems: "center", justifyContent: "flex-end" }}>
+                            <div className="bar blue" style={{ width: 70 }}>
+                              <i style={{ width: Math.min(100, c.pct) + "%" }} />
+                            </div>
+                            <b>{fmtPct(c.pct)}</b>
+                          </div>
+                        ) : (
+                          "–"
+                        )}
+                      </td>
+                      <td className="l"><Badge kind={c.status} /></td>
                     </tr>
-                  </thead>
-                  <tbody>
-                    {dtTable.map(({ t, c }) => {
-                      const kind = c.need === 0 ? "none" : c.rem === 0 ? "done" : c.done > 0 ? "part" : "none";
-                      return (
-                        <tr key={t.id}>
-                          <td className="name l">{t.tenGive}<div className="hint" style={{ margin: 0 }}>{t.maGive}</div></td>
-                          <td className="name l">{t.tenRecv ? shortName(t.tenRecv, 40) : <i style={{ color: "#6b7686" }}>chưa có NPP nhận</i>}<div className="hint" style={{ margin: 0 }}>{t.maRecv}</div></td>
-                          <td className="l">{t.vung}</td>
-                          <td>{fmt(c.need, metric)}</td>
-                          <td>{fmt(c.done, metric)}</td>
-                          <td>{fmt(c.rem, metric)}</td>
-                          <td>{c.need > 0 ? fmtPct(pctOf(c.done, c.need)) : "–"}</td>
-                          <td className="l">{c.need === 0 ? "–" : <Badge kind={kind} />}</td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              ) : (
-                <table>
-                  <thead>
-                    <tr>
-                      <th className="l">NPP nhận</th>
-                      <th className="l">Vùng</th>
-                      <th>Cần trừ</th>
-                      <th>Tồn hiện tại</th>
-                      <th>Đã SD (theo SO)</th>
-                      <th>Đã trừ (đối chiếu)</th>
-                      <th>Còn lại</th>
-                      <th>%</th>
-                      <th className="l">Trạng thái</th>
+                  ))}
+                  {pendRows.map((p) => (
+                    <tr key={"pend-" + p.vung} className="pend">
+                      <td className="name l">
+                        <i>Vùng {p.vung}</i>
+                        <div style={{ color: "#6b7686", fontSize: 12 }}>{p.givers.length} NPP cần điều tiết</div>
+                      </td>
+                      <td className="l">{p.vung}</td>
+                      <td>
+                        <button className="lnk" onClick={() => setModal({ kind: "pend", vung: p.vung })}>
+                          – / {fmt(p.need)}
+                        </button>
+                      </td>
+                      <td>–</td>
+                      <td>–</td>
+                      <td className="l"><Badge kind="pend" /></td>
                     </tr>
-                  </thead>
-                  <tbody>
-                    {ttTable.map(({ r, c }) => {
-                      const kind = c.over > 0 ? "over" : c.need > 0 && c.rem === 0 ? "done" : c.ded > 0 ? "part" : "none";
-                      return (
-                        <tr key={r.ma}>
-                          <td className="name l">{r.ten}<div className="hint" style={{ margin: 0 }}>{r.ma}</div></td>
-                          <td className="l">{r.vung}</td>
-                          <td>{fmt(c.need, metric)}</td>
-                          <td>{fmt(c.ton, metric)}</td>
-                          <td>{fmt(c.sd, metric)}</td>
-                          <td>{fmt(c.tt, metric)}</td>
-                          <td className={c.over > 0 ? "neg" : ""}>{c.over > 0 ? "-" + fmt(c.over, metric) : fmt(c.rem, metric)}</td>
-                          <td>{c.need > 0 ? fmtPct(pctOf(c.ded, c.need)) : "–"}</td>
-                          <td className="l"><Badge kind={kind} /></td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              )}
-              {(tab === "dt" ? dtTable.length : ttTable.length) === 0 ? (
+                  ))}
+                </tbody>
+              </table>
+              {tableRows.length + pendRows.length === 0 ? (
                 <div className="empty">Không có dòng nào khớp bộ lọc</div>
               ) : null}
             </div>
           </div>
         </>
       ) : null}
+
+      {modalRecv ? (
+        <RecvDetail
+          r={modalRecv}
+          givers={givenOf(modalRecv.ma)}
+          tab={modal.tab}
+          setTab={(tab) => setModal({ ...modal, tab })}
+          onClose={closeModal}
+        />
+      ) : null}
+      {modalPend ? <PendDetail p={modalPend} onClose={closeModal} /> : null}
     </div>
   );
 }
