@@ -141,13 +141,11 @@ function BarsChart({ data, series, stacked, needKey, height, onPick, yWidth, com
   const perRow = compact ? (stacked ? 28 : 40) : stacked ? 30 : 46;
   const h = height || Math.max(compact ? 170 : 180, data.length * perRow + (compact ? 55 : 70));
 
-  // Tính chiều rộng trục Y đủ để tên đầy đủ hiện 1 dòng (không rút gọn)
-  // ~7.2px / ký tự với font-size 11 + padding
+  // Tính chiều rộng trục Y đủ để tên đầy đủ hiện 1 dòng
   const longest = data.reduce((max, row) => Math.max(max, String(row.name || "").length), 0);
   const calculatedWidth = Math.ceil(longest * 7.2 + 28);
   const axisWidth = Math.max(yWidth || 180, calculatedWidth, compact ? 260 : 180);
 
-  // Vùng plot tối thiểu để cột không bị ép quá nhỏ
   const plotMinWidth = 380;
   const chartMinWidth = axisWidth + plotMinWidth + 40;
 
@@ -169,7 +167,7 @@ function BarsChart({ data, series, stacked, needKey, height, onPick, yWidth, com
             style: {
               whiteSpace: "nowrap",
               overflow: "hidden",
-              textOverflow: "clip", // không dùng ellipsis vì đã đủ rộng
+              textOverflow: "clip",
             },
           }}
         />
@@ -198,7 +196,6 @@ function BarsChart({ data, series, stacked, needKey, height, onPick, yWidth, com
     </ResponsiveContainer>
   );
 
-  // Compact = chart NPP dài tên → cho phép cuộn ngang nếu cần
   if (compact) {
     return (
       <div style={{ width: "100%", overflowX: "auto", overflowY: "hidden" }}>
@@ -640,7 +637,7 @@ export default function Page() {
         .slice(0, 12)
         .map((x) => ({
           ma: x.r.ma,
-          name: x.r.ten, // tên đầy đủ
+          name: x.r.ten,
           full: x.r.ten + " (" + x.r.ma + ")",
           got: x.c.got,
           remaining: x.c.remaining,
@@ -656,7 +653,7 @@ export default function Page() {
         .sort((a, b) => b.c.rem - a.c.rem)
         .slice(0, 12)
         .map((x) => ({
-          name: x.t.tenGive, // tên đầy đủ
+          name: x.t.tenGive,
           full:
             x.t.tenGive +
             " → " +
@@ -667,6 +664,36 @@ export default function Page() {
         })),
     [dt.rows]
   );
+
+  // ----- BẢNG TỔNG HỢP NPP CẦN ĐIỀU TIẾT (dành cho Sales) -----
+  const giverSummary = useMemo(() => {
+    const rows = fT
+      .map((t) => {
+        const c = transCalc(t, item);
+        return {
+          t,
+          c,
+          kind: giverKind(t),
+        };
+      })
+      .filter((x) => x.c.need > 0) // chỉ lấy NPP có nhu cầu điều tiết
+      .sort((a, b) => {
+        // Ưu tiên: Chưa → Một phần → Đã xong, rồi theo còn lại giảm dần
+        const rank = { gnone: 0, gpart: 1, gdone: 2 };
+        return rank[a.kind] - rank[b.kind] || b.c.rem - a.c.rem || a.t.tenGive.localeCompare(b.t.tenGive);
+      });
+
+    const cnt = {
+      gnone: 0,
+      gpart: 0,
+      gdone: 0,
+    };
+    rows.forEach((x) => {
+      if (cnt[x.kind] !== undefined) cnt[x.kind] += 1;
+    });
+
+    return { rows, cnt };
+  }, [fT, item]);
 
   // ----- bảng chi tiết trừ tồn NPP -----
   const needle = q.trim().toLowerCase();
@@ -958,6 +985,70 @@ export default function Page() {
                   { key: "remaining", name: "SL cần trừ tồn", color: COLORS.rem },
                 ]}
               />
+            </div>
+          </div>
+
+          {/* ========== BẢNG TỔNG HỢP NPP CẦN ĐIỀU TIẾT (Sales) ========== */}
+          <div className="card">
+            <div className="tabhead">
+              <div>
+                <h3 style={{ margin: 0 }}>Tổng hợp NPP cần điều tiết (báo cáo Sales)</h3>
+                <div className="hint" style={{ margin: 0 }}>
+                  {itemLabel} · đơn vị: cái · chỉ hiện NPP có nhu cầu điều tiết · sắp xếp ưu tiên chưa làm trước
+                </div>
+              </div>
+            </div>
+
+            <div className="summary" style={{ marginBottom: 12 }}>
+              <span className="badge b-over">Chưa điều tiết: {giverSummary.cnt.gnone}</span>
+              <span className="badge b-part">Một phần: {giverSummary.cnt.gpart}</span>
+              <span className="badge b-done">Đã điều tiết: {giverSummary.cnt.gdone}</span>
+            </div>
+
+            <div className="tablewrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th className="l">NPP thực hiện điều tiết</th>
+                    <th className="l">Vùng</th>
+                    <th className="l">Miền</th>
+                    <th>Cần điều tiết</th>
+                    <th>Đã điều tiết</th>
+                    <th>Còn lại</th>
+                    <th className="l">Trạng thái</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {giverSummary.rows.map(({ t, c, kind }) => (
+                    <tr key={t.id || t.maGive + t.vung}>
+                      <td className="name l">
+                        {t.tenGive}
+                        <div style={{ color: "#6b7686", fontSize: 12 }}>{t.maGive}</div>
+                      </td>
+                      <td className="l">{t.vung}</td>
+                      <td className="l">{t.mien}</td>
+                      <td>
+                        {item === "all" ? trio(t.need) : fmt(c.need)}
+                      </td>
+                      <td>
+                        {item === "all" ? trio(t.done) : fmt(c.done)}
+                      </td>
+                      <td>
+                        <b style={{ color: c.rem > 0 ? "#c2410c" : "#16a34a" }}>
+                          {item === "all" ? fmt(c.rem) : fmt(c.rem)}
+                        </b>
+                      </td>
+                      <td className="l">
+                        <Badge kind={kind} />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+
+              {giverSummary.rows.length === 0 ? (
+                <div className="empty">Không có NPP nào cần điều tiết với bộ lọc hiện tại</div>
+              ) : null}
             </div>
           </div>
 
