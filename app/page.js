@@ -18,7 +18,6 @@ const COLORS = {
   done: "#22a06b",
   rem: "#f0a020",
   got: "#2f6fed",
-  ton: "#22a06b",
 };
 
 const NO_LIST = "ASM chưa chốt DS điều tiết";
@@ -67,20 +66,17 @@ function statusOf(got, used, remaining) {
 
 // 1 NPP nhận:
 // - got: SL đã nhận điều tiết
-// - ton: Tồn kho hiện tại
 // - used: SL VP đã trừ tồn (thực tế sử dụng)
 // - remaining: SL còn lại cần trừ tồn (đọc trực tiếp từ sheet)
 function recvCalc(r, item) {
   let need = 0;
   let got = 0;
-  let ton = 0;
   let used = 0;
   let remaining = 0;
 
   for (const k of keysOf(item)) {
     need += r.need[k];
     got += r.done[k];
-    ton += r.ton[k];
     used += r.used[k];
     remaining += r.remaining[k];
   }
@@ -88,7 +84,6 @@ function recvCalc(r, item) {
   return {
     need,
     got,
-    ton,
     used,
     remaining,
     paid: used,
@@ -276,8 +271,8 @@ function RecvDetail({ r, givers, tab, setTab, onClose }) {
           <div className="stats">
             {ITEMS.map((i) => (
               <div className="stat" key={i.key}>
-                <div className="k">{i.label} còn trong kho</div>
-                <div className="v">{fmt(r.ton[i.key])}</div>
+                <div className="k">{i.label} đã nhận điều tiết</div>
+                <div className="v">{fmt(r.done[i.key])}</div>
               </div>
             ))}
           </div>
@@ -288,7 +283,7 @@ function RecvDetail({ r, givers, tab, setTab, onClose }) {
                 <tr>
                   <th className="l">Mặt hàng</th>
                   <th>SL nhận điều tiết</th>
-                  <th>Tồn hiện tại</th>
+                  <th>SL đã nhận điều tiết</th>
                   <th>Đã trừ tồn</th>
                   <th>SL còn lại cần trừ tồn</th>
                   <th>Tiến độ trừ tồn</th>
@@ -299,7 +294,6 @@ function RecvDetail({ r, givers, tab, setTab, onClose }) {
               <tbody>
                 {ITEMS.map((i) => {
                   const got = r.done[i.key];
-                  const ton = r.ton[i.key];
                   const used = r.used[i.key];
                   const remaining = r.remaining[i.key];
 
@@ -307,7 +301,7 @@ function RecvDetail({ r, givers, tab, setTab, onClose }) {
                     <tr key={i.key}>
                       <td className="l">{i.label}</td>
                       <td>{fmt(got)}</td>
-                      <td>{fmt(ton)}</td>
+                      <td>{fmt(got)}</td>
                       <td>{fmt(used)}</td>
                       <td>{fmt(remaining)}</td>
                       <td>{got > 0 ? fmtPct(pctOf(used, got)) : "–"}</td>
@@ -508,9 +502,14 @@ export default function Page() {
       return { label: i.label, pct: pctOf(d, n) };
     });
 
+    const remainingByItem = ITEMS.map((i) => ({
+      label: i.label,
+      v: fT.reduce((s, t) => s + Math.max(t.need[i.key] - t.done[i.key], 0), 0),
+    }));
+
     const pending = rows.filter((x) => x.c.rem > 0).length;
 
-    return { total, byGroup, rows, perItem, pending };
+    return { total, byGroup, rows, perItem, remainingByItem, pending };
   }, [fT, item, groupBy]);
 
   // ----- vùng chưa chốt DS điều tiết (NPP chưa có NPP nhận) -----
@@ -542,7 +541,6 @@ export default function Page() {
 
   const tt = useMemo(() => {
     const got = rrows.reduce((s, x) => s + x.c.got, 0);
-    const ton = rrows.reduce((s, x) => s + x.c.ton, 0);
     const used = rrows.reduce((s, x) => s + x.c.used, 0);
     const remaining = rrows.reduce((s, x) => s + x.c.remaining, 0);
 
@@ -556,11 +554,6 @@ export default function Page() {
         blue: true,
       };
     });
-
-    const tonByItem = ITEMS.map((i) => ({
-      label: i.label,
-      v: fR.reduce((s, r) => s + r.ton[i.key], 0),
-    }));
 
     const remainingByItem = ITEMS.map((i) => ({
       label: i.label,
@@ -581,37 +574,37 @@ export default function Page() {
 
     return {
       got,
-      ton,
       used,
       remaining,
       perItem,
-      tonByItem,
       remainingByItem,
       cnt,
     };
   }, [rrows, fR]);
 
-  const byGroupStock = useMemo(
+  // So sánh SL đã nhận điều tiết với SL còn lại cần trừ tồn theo Miền/Vùng
+  const byGroupDeduction = useMemo(
     () =>
       groupSum(
         fR,
         (r) => r[groupBy],
         (r) => recvCalc(r, item),
-        ["got", "ton"]
+        ["got", "remaining"]
       ),
     [fR, groupBy, item]
   );
 
+  // So sánh SL đã nhận điều tiết với SL còn lại cần trừ tồn theo từng NPP
   const nppChart = useMemo(
     () =>
       [...rrows]
-        .sort((a, b) => b.c.ton - a.c.ton || b.c.got - a.c.got)
+        .sort((a, b) => b.c.remaining - a.c.remaining || b.c.got - a.c.got)
         .map((x) => ({
           ma: x.r.ma,
           name: x.r.ten,
           full: x.r.ten + " (" + x.r.ma + ")",
           got: x.c.got,
-          ton: x.c.ton,
+          remaining: x.c.remaining,
         })),
     [rrows]
   );
@@ -684,7 +677,7 @@ export default function Page() {
   const METRIC_LABEL = {
     need: "SL cần điều tiết",
     done: "SL đã điều tiết",
-    ton: "Tồn kho hiện tại",
+    ton: "SL đã sử dụng (theo SO)",
     used: "SL VP đã trừ tồn (thực tế sử dụng)",
     remaining: "SL còn lại cần trừ tồn",
   };
@@ -803,7 +796,14 @@ export default function Page() {
               <div className="big">{fmt(dt.total.rem)}</div>
 
               <div className="line2">
-                {fmt(dt.total.need)} − {fmt(dt.total.done)} cái · {dt.pending} dòng điều tiết chưa xong
+                {dt.remainingByItem
+                  .filter((x) => item === "all" || ITEMS.find((i) => i.label === x.label)?.key === item)
+                  .map((x) => x.label + " " + fmt(x.v))
+                  .join(" · ")}
+              </div>
+
+              <div className="line2">
+                Còn thiếu điều tiết: {dt.pending} dòng
               </div>
             </div>
 
@@ -868,17 +868,17 @@ export default function Page() {
             </div>
 
             <div className="card">
-              <h3>Tồn hiện tại so với SL đã điều tiết theo {groupLabel}</h3>
+              <h3>SL cần trừ tồn so với SL đã điều tiết theo {groupLabel}</h3>
 
               <div className="hint">
-                Chỉ tính NPP đã có danh sách nhận điều tiết · {itemLabel} · đơn vị: cái
+                SL còn lại cần trừ tồn so với SL đã nhận điều tiết · {itemLabel} · đơn vị: cái
               </div>
 
               <BarsChart
-                data={byGroupStock}
+                data={byGroupDeduction}
                 series={[
                   { key: "got", name: "SL đã nhận điều tiết", color: COLORS.got },
-                  { key: "ton", name: "Tồn hiện tại", color: COLORS.ton },
+                  { key: "remaining", name: "SL cần trừ tồn", color: COLORS.rem },
                 ]}
               />
             </div>
@@ -903,10 +903,10 @@ export default function Page() {
             </div>
 
             <div className="card cardfull">
-              <h3>Kiểm tra tồn kho hiện tại của từng NPP nhận điều tiết</h3>
+              <h3>SL cần trừ tồn so với SL đã điều tiết theo NPP nhận</h3>
 
               <div className="hint">
-                Sắp xếp theo tồn hiện tại giảm dần · {itemLabel} · bấm vào cột để xem tồn từng mặt hàng
+                Sắp xếp theo SL còn lại cần trừ tồn giảm dần · {itemLabel} · bấm vào cột để xem chi tiết NPP
               </div>
 
               <BarsChart
@@ -915,7 +915,7 @@ export default function Page() {
                 onPick={(ma) => setModal({ kind: "recv", ma, tab: "stock" })}
                 series={[
                   { key: "got", name: "SL đã nhận điều tiết", color: COLORS.got },
-                  { key: "ton", name: "Tồn hiện tại", color: COLORS.ton },
+                  { key: "remaining", name: "SL cần trừ tồn", color: COLORS.rem },
                 ]}
               />
             </div>
@@ -946,7 +946,6 @@ export default function Page() {
                     <th className="l">NPP nhận điều tiết</th>
                     <th className="l">Vùng</th>
                     <th>SL nhận điều tiết</th>
-                    <th>Tồn hiện tại</th>
                     <th>Đã trừ tồn</th>
                     <th>SL còn lại cần trừ tồn</th>
                     <th>Tiến độ trừ tồn</th>
@@ -977,17 +976,6 @@ export default function Page() {
                         <span style={{ color: "#6b7686", fontSize: 12 }}>
                           {" "} / cần {fmt(c.need)}
                         </span>
-                      </td>
-
-                      <td>
-                        <button
-                          className="lnk"
-                          onClick={() =>
-                            setModal({ kind: "recv", ma: r.ma, tab: "stock" })
-                          }
-                        >
-                          {fmt(c.ton)}
-                        </button>
                       </td>
 
                       <td>{fmt(c.used)}</td>
@@ -1047,7 +1035,6 @@ export default function Page() {
                         </button>
                       </td>
 
-                      <td>–</td>
                       <td>–</td>
                       <td>–</td>
                       <td>–</td>
