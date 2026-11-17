@@ -29,19 +29,6 @@ const fmtPct = (p) =>
   Number.isFinite(p) ? p.toLocaleString("vi-VN", { maximumFractionDigits: 1 }) + "%" : "0%";
 const trio = (o) => fmt(o.at) + " / " + fmt(o.bl) + " / " + fmt(o.kd);
 
-/** Rút gọn tên NPP để luôn hiển thị 1 dòng trên trục Y của chart */
-function shortName(s, max = 28) {
-  let t = String(s || "")
-    .replace(/^CÔNG TY (TRÁCH NHIỆM HỮU HẠN|TNHH|CỔ PHẦN|CP)\s*/i, "")
-    .replace(/^(MỘT THÀNH VIÊN|MTV|1TV)\s*/i, "")
-    .replace(/^DOANH NGHIỆP TƯ NHÂN\s*/i, "DNTN ")
-    .replace(/\s+/g, " ")
-    .trim();
-
-  if (t.length <= max) return t;
-  return t.slice(0, max - 1).trimEnd() + "…";
-}
-
 // 1 dòng điều tiết (NPP giao -> NPP nhận)
 function transCalc(t, item) {
   let need = 0;
@@ -62,12 +49,8 @@ function transferStatusOf(need, got) {
 
 // Trạng thái trừ tồn
 function statusOf(got, used, remaining) {
-  // Chưa nhận được hàng thì chưa thể xác nhận đã giải tồn
   if (got <= 0) return "notstart";
-
-  // Đã giải tồn hết số lượng thực tế đã nhận điều tiết
   if (remaining <= 0) return "receivedfinished";
-
   if (used > 0) return "processing";
   return "notstart";
 }
@@ -132,6 +115,7 @@ function Tip({ active, payload, label, needKey }) {
         borderRadius: 8,
         padding: "8px 10px",
         fontSize: 12,
+        maxWidth: 420,
       }}
     >
       <div style={{ fontWeight: 700, marginBottom: 4 }}>{row.full || label}</div>
@@ -154,27 +138,39 @@ function Tip({ active, payload, label, needKey }) {
 function BarsChart({ data, series, stacked, needKey, height, onPick, yWidth, compact = false }) {
   if (!data.length) return <div className="empty">Không có dữ liệu</div>;
 
-  const perRow = compact ? (stacked ? 26 : 38) : stacked ? 30 : 46;
-  const h = height || Math.max(compact ? 160 : 180, data.length * perRow + (compact ? 52 : 70));
+  const perRow = compact ? (stacked ? 28 : 40) : stacked ? 30 : 46;
+  const h = height || Math.max(compact ? 170 : 180, data.length * perRow + (compact ? 55 : 70));
 
-  // Chiều rộng trục Y cố định vừa đủ cho tên đã rút gọn (1 dòng)
-  const axisWidth = yWidth || (compact ? 220 : 170);
+  // Tính chiều rộng trục Y đủ để tên đầy đủ hiện 1 dòng (không rút gọn)
+  // ~7.2px / ký tự với font-size 11 + padding
+  const longest = data.reduce((max, row) => Math.max(max, String(row.name || "").length), 0);
+  const calculatedWidth = Math.ceil(longest * 7.2 + 28);
+  const axisWidth = Math.max(yWidth || 180, calculatedWidth, compact ? 260 : 180);
 
-  return (
+  // Vùng plot tối thiểu để cột không bị ép quá nhỏ
+  const plotMinWidth = 380;
+  const chartMinWidth = axisWidth + plotMinWidth + 40;
+
+  const chart = (
     <ResponsiveContainer width="100%" height={h}>
-      <BarChart data={data} layout="vertical" margin={{ top: 4, right: 16, left: 4, bottom: 4 }}>
+      <BarChart data={data} layout="vertical" margin={{ top: 4, right: 20, left: 4, bottom: 4 }}>
         <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#e3e8ef" />
         <XAxis type="number" tickFormatter={(v) => fmt(v)} fontSize={11} />
         <YAxis
           type="category"
           dataKey="name"
           width={axisWidth}
-          fontSize={compact ? 11 : 11}
+          fontSize={11}
           interval={0}
+          tickLine={false}
+          axisLine={false}
           tick={{
-            // Ép không wrap
-            width: axisWidth - 8,
-            style: { whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
+            width: axisWidth - 10,
+            style: {
+              whiteSpace: "nowrap",
+              overflow: "hidden",
+              textOverflow: "clip", // không dùng ellipsis vì đã đủ rộng
+            },
           }}
         />
         <Tooltip content={<Tip needKey={needKey} />} />
@@ -201,6 +197,17 @@ function BarsChart({ data, series, stacked, needKey, height, onPick, yWidth, com
       </BarChart>
     </ResponsiveContainer>
   );
+
+  // Compact = chart NPP dài tên → cho phép cuộn ngang nếu cần
+  if (compact) {
+    return (
+      <div style={{ width: "100%", overflowX: "auto", overflowY: "hidden" }}>
+        <div style={{ minWidth: chartMinWidth, width: "100%" }}>{chart}</div>
+      </div>
+    );
+  }
+
+  return chart;
 }
 
 function MiniBars({ rows }) {
@@ -624,7 +631,7 @@ export default function Page() {
     [fR, groupBy, item]
   );
 
-  // Chart NPP nhận – chỉ top 12, tên đã rút gọn 1 dòng
+  // Chart NPP nhận – tên đầy đủ, 1 dòng
   const nppChart = useMemo(
     () =>
       [...rrows]
@@ -633,7 +640,7 @@ export default function Page() {
         .slice(0, 12)
         .map((x) => ({
           ma: x.r.ma,
-          name: shortName(x.r.ten, 26),
+          name: x.r.ten, // tên đầy đủ
           full: x.r.ten + " (" + x.r.ma + ")",
           got: x.c.got,
           remaining: x.c.remaining,
@@ -641,7 +648,7 @@ export default function Page() {
     [rrows]
   );
 
-  // Chart Top NPP còn thiếu điều tiết – tên đã rút gọn 1 dòng
+  // Chart Top NPP còn thiếu điều tiết – tên đầy đủ, 1 dòng
   const topDT = useMemo(
     () =>
       dt.rows
@@ -649,7 +656,7 @@ export default function Page() {
         .sort((a, b) => b.c.rem - a.c.rem)
         .slice(0, 12)
         .map((x) => ({
-          name: shortName(x.t.tenGive, 26),
+          name: x.t.tenGive, // tên đầy đủ
           full:
             x.t.tenGive +
             " → " +
@@ -920,14 +927,13 @@ export default function Page() {
               <h3>Top các NPP còn thiếu điều tiết</h3>
 
               <div className="hint">
-                NPP thực hiện điều tiết · 12 dòng đầu · di chuột để xem NPP nhận
+                NPP thực hiện điều tiết · 12 dòng đầu · di chuột để xem NPP nhận · tên hiện đầy đủ 1 dòng
               </div>
 
               <BarsChart
                 data={topDT}
                 needKey="need"
                 stacked
-                yWidth={220}
                 compact
                 series={[
                   { key: "done", name: "Đã điều tiết", color: COLORS.done },
@@ -940,12 +946,11 @@ export default function Page() {
               <h3>SL cần trừ tồn so với SL đã điều tiết theo NPP nhận</h3>
 
               <div className="hint">
-                Sắp xếp theo SL còn lại cần trừ tồn giảm dần · Top 12 · {itemLabel} · bấm vào cột để xem chi tiết NPP
+                Sắp xếp theo SL còn lại cần trừ tồn giảm dần · Top 12 · {itemLabel} · bấm vào cột để xem chi tiết NPP · tên hiện đầy đủ 1 dòng
               </div>
 
               <BarsChart
                 data={nppChart}
-                yWidth={220}
                 compact
                 onPick={(ma) => setModal({ kind: "recv", ma, tab: "stock" })}
                 series={[
