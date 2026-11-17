@@ -141,7 +141,6 @@ function BarsChart({ data, series, stacked, needKey, height, onPick, yWidth, com
   const perRow = compact ? (stacked ? 28 : 40) : stacked ? 30 : 46;
   const h = height || Math.max(compact ? 170 : 180, data.length * perRow + (compact ? 55 : 70));
 
-  // Tính chiều rộng trục Y đủ để tên đầy đủ hiện 1 dòng
   const longest = data.reduce((max, row) => Math.max(max, String(row.name || "").length), 0);
   const calculatedWidth = Math.ceil(longest * 7.2 + 28);
   const axisWidth = Math.max(yWidth || 180, calculatedWidth, compact ? 260 : 180);
@@ -243,7 +242,7 @@ function Badge({ kind }) {
   return <span className={"badge " + cls}>{text}</span>;
 }
 
-function Modal({ title, sub, onClose, children }) {
+function Modal({ title, sub, onClose, children, wide = false }) {
   useEffect(() => {
     const h = (e) => {
       if (e.key === "Escape") onClose();
@@ -255,7 +254,11 @@ function Modal({ title, sub, onClose, children }) {
 
   return (
     <div className="overlay" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
+      <div
+        className="modal"
+        onClick={(e) => e.stopPropagation()}
+        style={wide ? { maxWidth: 960, width: "95%" } : undefined}
+      >
         <div className="mhead">
           <h3>{title}</h3>
           <button onClick={onClose}>Đóng</button>
@@ -429,6 +432,66 @@ function PendDetail({ p, onClose }) {
   );
 }
 
+// Modal báo cáo nhanh Sales
+function SalesReportModal({ rows, cnt, item, itemLabel, filterLabel, onClose }) {
+  return (
+    <Modal
+      title="Báo cáo nhanh – NPP cần điều tiết"
+      sub={filterLabel + " · " + itemLabel}
+      onClose={onClose}
+      wide
+    >
+      <div className="summary" style={{ marginBottom: 14 }}>
+        <span className="badge b-over">Chưa điều tiết: {cnt.gnone}</span>
+        <span className="badge b-part">Một phần: {cnt.gpart}</span>
+        <span className="badge b-done">Đã điều tiết: {cnt.gdone}</span>
+      </div>
+
+      <div className="hint" style={{ color: "#6b7686", fontSize: 12, marginBottom: 10 }}>
+        Chỉ hiện NPP có nhu cầu điều tiết · sắp xếp ưu tiên chưa làm trước · đơn vị: cái
+      </div>
+
+      <div className="tablewrap">
+        <table>
+          <thead>
+            <tr>
+              <th className="l">NPP thực hiện điều tiết</th>
+              <th className="l">Vùng</th>
+              <th>Cần điều tiết</th>
+              <th>Đã điều tiết</th>
+              <th>Còn lại</th>
+              <th className="l">Trạng thái</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map(({ t, c, kind }) => (
+              <tr key={t.id || t.maGive + t.vung}>
+                <td className="name l">
+                  {t.tenGive}
+                  <div style={{ color: "#6b7686", fontSize: 12 }}>{t.maGive}</div>
+                </td>
+                <td className="l">{t.vung}</td>
+                <td>{item === "all" ? trio(t.need) : fmt(c.need)}</td>
+                <td>{item === "all" ? trio(t.done) : fmt(c.done)}</td>
+                <td>
+                  <b style={{ color: c.rem > 0 ? "#c2410c" : "#16a34a" }}>{fmt(c.rem)}</b>
+                </td>
+                <td className="l">
+                  <Badge kind={kind} />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+
+        {rows.length === 0 ? (
+          <div className="empty">Không có NPP nào cần điều tiết với bộ lọc hiện tại</div>
+        ) : null}
+      </div>
+    </Modal>
+  );
+}
+
 // ---------- trang chính ----------
 export default function Page() {
   const [data, setData] = useState(null);
@@ -439,6 +502,7 @@ export default function Page() {
   const [item, setItem] = useState("all");
   const [q, setQ] = useState("");
   const [modal, setModal] = useState(null);
+  const [showSalesReport, setShowSalesReport] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -616,7 +680,6 @@ export default function Page() {
     };
   }, [rrows, fR]);
 
-  // So sánh SL đã nhận điều tiết với SL còn lại cần trừ tồn theo Miền/Vùng
   const byGroupDeduction = useMemo(
     () =>
       groupSum(
@@ -628,7 +691,6 @@ export default function Page() {
     [fR, groupBy, item]
   );
 
-  // Chart NPP nhận – tên đầy đủ, 1 dòng
   const nppChart = useMemo(
     () =>
       [...rrows]
@@ -645,7 +707,6 @@ export default function Page() {
     [rrows]
   );
 
-  // Chart Top NPP còn thiếu điều tiết – tên đầy đủ, 1 dòng
   const topDT = useMemo(
     () =>
       dt.rows
@@ -665,7 +726,7 @@ export default function Page() {
     [dt.rows]
   );
 
-  // ----- BẢNG TỔNG HỢP NPP CẦN ĐIỀU TIẾT (dành cho Sales) -----
+  // ----- Dữ liệu báo cáo nhanh Sales -----
   const giverSummary = useMemo(() => {
     const rows = fT
       .map((t) => {
@@ -676,24 +737,28 @@ export default function Page() {
           kind: giverKind(t),
         };
       })
-      .filter((x) => x.c.need > 0) // chỉ lấy NPP có nhu cầu điều tiết
+      .filter((x) => x.c.need > 0)
       .sort((a, b) => {
-        // Ưu tiên: Chưa → Một phần → Đã xong, rồi theo còn lại giảm dần
         const rank = { gnone: 0, gpart: 1, gdone: 2 };
         return rank[a.kind] - rank[b.kind] || b.c.rem - a.c.rem || a.t.tenGive.localeCompare(b.t.tenGive);
       });
 
-    const cnt = {
-      gnone: 0,
-      gpart: 0,
-      gdone: 0,
-    };
+    const cnt = { gnone: 0, gpart: 0, gdone: 0 };
     rows.forEach((x) => {
       if (cnt[x.kind] !== undefined) cnt[x.kind] += 1;
     });
 
     return { rows, cnt };
   }, [fT, item]);
+
+  // Chỉ hiện nút Báo cáo nhanh khi đã lọc miền hoặc vùng
+  const hasRegionFilter = mien !== "all" || vung !== "all";
+
+  const filterLabel = useMemo(() => {
+    if (vung !== "all") return "Vùng " + vung;
+    if (mien !== "all") return "Miền " + mien;
+    return "Tất cả";
+  }, [mien, vung]);
 
   // ----- bảng chi tiết trừ tồn NPP -----
   const needle = q.trim().toLowerCase();
@@ -751,7 +816,20 @@ export default function Page() {
 
   return (
     <div className="wrap">
-      <div className="top">
+      {/* ========== THANH LỌC STICKY ========== */}
+      <div
+        className="top"
+        style={{
+          position: "sticky",
+          top: 0,
+          zIndex: 40,
+          background: "#fff",
+          borderBottom: "1px solid #e3e8ef",
+          boxShadow: "0 2px 8px rgba(0,0,0,0.06)",
+          paddingBottom: 12,
+          marginBottom: 16,
+        }}
+      >
         <div>
           <h1>Tracking điều tiết POSM &amp; trừ tồn kho</h1>
 
@@ -768,7 +846,7 @@ export default function Page() {
           </div>
         </div>
 
-        <div className="controls">
+        <div className="controls" style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
           <select
             value={mien}
             onChange={(e) => {
@@ -805,6 +883,24 @@ export default function Page() {
           <button onClick={load} disabled={loading}>
             {loading ? "Đang tải…" : "Làm mới"}
           </button>
+
+          {/* Nút Báo cáo nhanh – chỉ hiện khi đã lọc miền/vùng */}
+          {hasRegionFilter && (
+            <button
+              onClick={() => setShowSalesReport(true)}
+              style={{
+                background: "#1d4ed8",
+                color: "#fff",
+                border: "none",
+                borderRadius: 8,
+                padding: "6px 14px",
+                fontWeight: 600,
+                cursor: "pointer",
+              }}
+            >
+              Báo cáo nhanh Sales
+            </button>
+          )}
         </div>
       </div>
 
@@ -988,70 +1084,7 @@ export default function Page() {
             </div>
           </div>
 
-          {/* ========== BẢNG TỔNG HỢP NPP CẦN ĐIỀU TIẾT (Sales) ========== */}
-          <div className="card">
-            <div className="tabhead">
-              <div>
-                <h3 style={{ margin: 0 }}>Tổng hợp NPP cần điều tiết (báo cáo Sales)</h3>
-                <div className="hint" style={{ margin: 0 }}>
-                  {itemLabel} · đơn vị: cái · chỉ hiện NPP có nhu cầu điều tiết · sắp xếp ưu tiên chưa làm trước
-                </div>
-              </div>
-            </div>
-
-            <div className="summary" style={{ marginBottom: 12 }}>
-              <span className="badge b-over">Chưa điều tiết: {giverSummary.cnt.gnone}</span>
-              <span className="badge b-part">Một phần: {giverSummary.cnt.gpart}</span>
-              <span className="badge b-done">Đã điều tiết: {giverSummary.cnt.gdone}</span>
-            </div>
-
-            <div className="tablewrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th className="l">NPP thực hiện điều tiết</th>
-                    <th className="l">Vùng</th>
-                    <th className="l">Miền</th>
-                    <th>Cần điều tiết</th>
-                    <th>Đã điều tiết</th>
-                    <th>Còn lại</th>
-                    <th className="l">Trạng thái</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {giverSummary.rows.map(({ t, c, kind }) => (
-                    <tr key={t.id || t.maGive + t.vung}>
-                      <td className="name l">
-                        {t.tenGive}
-                        <div style={{ color: "#6b7686", fontSize: 12 }}>{t.maGive}</div>
-                      </td>
-                      <td className="l">{t.vung}</td>
-                      <td className="l">{t.mien}</td>
-                      <td>
-                        {item === "all" ? trio(t.need) : fmt(c.need)}
-                      </td>
-                      <td>
-                        {item === "all" ? trio(t.done) : fmt(c.done)}
-                      </td>
-                      <td>
-                        <b style={{ color: c.rem > 0 ? "#c2410c" : "#16a34a" }}>
-                          {item === "all" ? fmt(c.rem) : fmt(c.rem)}
-                        </b>
-                      </td>
-                      <td className="l">
-                        <Badge kind={kind} />
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-
-              {giverSummary.rows.length === 0 ? (
-                <div className="empty">Không có NPP nào cần điều tiết với bộ lọc hiện tại</div>
-              ) : null}
-            </div>
-          </div>
-
+          {/* Bảng Chi tiết trừ tồn NPP giữ nguyên */}
           <div className="card">
             <div className="tabhead">
               <div>
@@ -1232,6 +1265,18 @@ export default function Page() {
 
       {modalPend ? (
         <PendDetail p={modalPend} onClose={closeModal} />
+      ) : null}
+
+      {/* Modal Báo cáo nhanh Sales */}
+      {showSalesReport ? (
+        <SalesReportModal
+          rows={giverSummary.rows}
+          cnt={giverSummary.cnt}
+          item={item}
+          itemLabel={itemLabel}
+          filterLabel={filterLabel}
+          onClose={() => setShowSalesReport(false)}
+        />
       ) : null}
     </div>
   );
